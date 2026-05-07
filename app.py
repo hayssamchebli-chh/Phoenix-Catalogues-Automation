@@ -1454,16 +1454,7 @@ if all_codes_preview and selected_blocks:
     preview_code = all_codes_preview[0]
     preview_url = build_phoenix_pdf_url(preview_code, selected_blocks, action="VIEW")
 
-    st.markdown(
-        f"""
-        <div class="url-preview">
-            Preview for <strong>PHX-{preview_code}</strong>: encoded API code
-            <strong>{encode_item_number_for_phoenix(preview_code)}</strong>.
-            The link uses <strong>action=VIEW</strong>.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
 
     st.code(preview_url, language="text")
 
