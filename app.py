@@ -1556,7 +1556,7 @@ engine_label = st.radio(
 
 engine = "selenium_file_download_only" if engine_label.startswith("Selenium") else "fast_browser_fetch_with_fallback"
 
-    unsafe_allow_html=True,
+unsafe_allow_html=True,
 
 
 run_clicked = st.button("Build PDF Pack", type="primary", use_container_width=True)
