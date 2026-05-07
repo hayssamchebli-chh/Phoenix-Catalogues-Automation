@@ -1292,9 +1292,6 @@ st.markdown(
     """
     <div class="phx-topbar">
         <div>Product documentation</div>
-        <div class="topbar-links">
-            
-        </div>
     </div>
 
     <div class="phx-brandbar">
