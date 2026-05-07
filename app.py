@@ -1326,18 +1326,10 @@ st.markdown(
             <div class="hero-pills">
                 <div class="hero-pill">PHX item codes</div>
                 <div class="hero-pill">Excel import</div>
-                <div class="hero-pill">Technical data + drawings by default</div>
                 <div class="hero-pill">Merged PDF output</div>
             </div>
         </div>
-        <div class="hero-visual" aria-hidden="true">
-            <div class="terminal-rail">
-                <div class="terminal"></div>
-                <div class="terminal"></div>
-                <div class="terminal"></div>
-                <div class="terminal"></div>
-            </div>
-        </div>
+
     </div>
     """,
     unsafe_allow_html=True,
