@@ -528,12 +528,28 @@ def download_pdfs(
 # -----------------------------------------------------------------------------
 # UI helpers and CSS
 # -----------------------------------------------------------------------------
+def phx_section(eyebrow: str, title: str, subtitle: str = "") -> None:
+    st.markdown(
+        f"""
+        <div class="phx-section-title">
+            <div class="phx-eyebrow">{eyebrow}</div>
+            <h2>{title}</h2>
+            <p>{subtitle}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_step(number: str, title: str, text: str) -> None:
     st.markdown(
         f"""
-        <div class="process-card">
-            <div class="process-number">{number}</div>
-            <div><div class="process-title">{title}</div><div class="process-text">{text}</div></div>
+        <div class="step-card">
+            <div class="step-number">{number}</div>
+            <div>
+                <div class="step-title">{title}</div>
+                <div class="step-text">{text}</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -544,102 +560,516 @@ def render_metric_cards(submitted: int, downloaded: int, failed: int) -> None:
     st.markdown(
         f"""
         <div class="metric-grid">
-            <div class="metric-card"><div class="metric-label">Submitted</div><div class="metric-value">{submitted}</div></div>
-            <div class="metric-card"><div class="metric-label">Downloaded</div><div class="metric-value">{downloaded}</div></div>
-            <div class="metric-card"><div class="metric-label">Failed</div><div class="metric-value">{failed}</div></div>
+            <div class="metric-card"><span>Submitted</span><strong>{submitted}</strong></div>
+            <div class="metric-card"><span>Downloaded</span><strong>{downloaded}</strong></div>
+            <div class="metric-card"><span>Failed</span><strong>{failed}</strong></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-st.set_page_config(page_title="Phoenix Contact Datasheet Pack Builder", page_icon="P", layout="wide")
+st.set_page_config(
+    page_title="Phoenix Contact Datasheet Pack Builder",
+    page_icon="P",
+    layout="wide",
+)
 
 st.markdown(
     """
     <style>
         :root {
             --phx-yellow: #ffd200;
-            --phx-yellow-soft: #fff4b8;
-            --phx-black: #151515;
-            --phx-ink: #232323;
-            --phx-muted: #6b6b6b;
-            --phx-line: #dedede;
-            --phx-warm: #f2f1ed;
-            --phx-silver: #f6f6f4;
-            --phx-shadow: rgba(10, 10, 10, 0.08);
+            --phx-yellow-2: #ffe568;
+            --phx-black: #111111;
+            --phx-ink: #222222;
+            --phx-muted: #666666;
+            --phx-line: #d9d9d9;
+            --phx-bg: #f4f3ef;
+            --phx-card: #ffffff;
+            --phx-soft: #faf9f5;
+            --phx-shadow: rgba(0, 0, 0, 0.075);
         }
-        #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; height: 0; }
+
+        #MainMenu, footer, header[data-testid="stHeader"] {
+            visibility: hidden;
+            height: 0;
+        }
+
         .stApp {
-            background: radial-gradient(circle at top right, rgba(255,210,0,0.24), transparent 24rem), linear-gradient(180deg,#ffffff 0%,var(--phx-warm) 58%,#fafaf8 100%);
-            color: var(--phx-ink); font-family: Arial, Helvetica, sans-serif;
+            background: linear-gradient(180deg, #ffffff 0%, var(--phx-bg) 68%, #ffffff 100%);
+            color: var(--phx-ink);
+            font-family: Arial, Helvetica, sans-serif;
         }
-        .block-container { padding-top: 1.15rem; padding-bottom: 2.5rem; max-width: 1180px; }
-        .phx-shell { background: rgba(255,255,255,0.97); border: 1px solid var(--phx-line); box-shadow: 0 18px 44px var(--phx-shadow); margin-bottom: 1.25rem; }
-        .utility-bar { display: flex; justify-content: flex-end; gap: 1.15rem; padding: 0.55rem 1.1rem; border-bottom: 1px solid var(--phx-line); color: var(--phx-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
-        .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; padding: 1rem 1.1rem 0.95rem; }
-        .brand-lockup { display: flex; align-items: stretch; min-height: 48px; border: 1px solid var(--phx-black); }
-        .brand-phoenix, .brand-contact { display: grid; place-items: center; padding: 0.45rem 0.85rem; font-size: clamp(1.4rem,3vw,2.25rem); line-height: 1; font-weight: 900; letter-spacing: -0.045em; }
-        .brand-phoenix { background: #fff; color: var(--phx-black); }
-        .brand-contact { background: var(--phx-yellow); color: var(--phx-black); }
-        .search-pill { display: inline-flex; align-items: center; gap: 0.45rem; border: 1px solid var(--phx-line); background: var(--phx-silver); color: var(--phx-muted); border-radius: 999px; padding: 0.62rem 0.95rem; font-size: 0.88rem; min-width: 245px; justify-content: space-between; }
-        .search-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--phx-yellow); box-shadow: 0 0 0 5px rgba(255,210,0,0.18); }
-        .nav-row { display: flex; flex-wrap: wrap; border-top: 1px solid var(--phx-line); }
-        .nav-item { padding: 0.82rem 1.05rem; border-right: 1px solid var(--phx-line); color: var(--phx-ink); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.045em; font-weight: 800; }
-        .nav-item:first-child { background: var(--phx-yellow); }
-        .hero-section { display: grid; grid-template-columns: 1.22fr 0.78fr; gap: 1.5rem; align-items: stretch; background: linear-gradient(135deg,#f7f5ee 0%,#fff 55%,#ebebe8 100%); border: 1px solid var(--phx-line); box-shadow: 0 18px 46px var(--phx-shadow); padding: 2rem; margin-bottom: 1rem; }
-        .hero-kicker { display: inline-flex; align-items: center; gap: 0.55rem; color: var(--phx-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 900; }
-        .hero-kicker::before { content: ""; display: block; width: 34px; height: 5px; background: var(--phx-yellow); }
-        .hero-title { margin: 0.75rem 0 0.7rem; color: var(--phx-black); font-size: clamp(2.1rem,4vw,4rem); line-height: 0.98; letter-spacing: -0.045em; font-weight: 900; }
-        .hero-copy { max-width: 690px; color: #505050; font-size: 1.03rem; line-height: 1.72; margin-bottom: 1.2rem; }
-        .hero-tags { display: flex; flex-wrap: wrap; gap: 0.55rem; }
-        .hero-tag { background: #fff; border: 1px solid var(--phx-line); border-left: 5px solid var(--phx-yellow); padding: 0.55rem 0.72rem; font-size: 0.82rem; color: var(--phx-ink); font-weight: 800; }
-        .hero-visual { display:flex; align-items:center; justify-content:center; min-height:245px; }
-        .terminal-card { width:min(100%,350px); min-height:210px; border-radius:2px; background:linear-gradient(145deg,#fff 0%,#efefec 100%); border:1px solid #d4d4d0; box-shadow:0 24px 44px rgba(0,0,0,0.13); display:flex; align-items:center; justify-content:center; gap:0.5rem; padding:1.15rem; transform:rotate(-2deg); }
-        .terminal-block { width:50px; height:140px; background:linear-gradient(180deg,#ffe66d 0%,var(--phx-yellow) 52%,#e5b900 100%); border:1px solid #caa600; position:relative; box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 10px 18px rgba(0,0,0,0.07); }
-        .terminal-block::before, .terminal-block::after { content:""; position:absolute; left:11px; width:28px; height:28px; border-radius:50%; background:#fff; border:3px solid #222; box-sizing:border-box; }
-        .terminal-block::before { top:22px; } .terminal-block::after { bottom:22px; }
-        .process-card { display:flex; gap:0.85rem; min-height:98px; background:rgba(255,255,255,0.94); border:1px solid var(--phx-line); border-bottom:4px solid var(--phx-yellow); padding:1rem; box-shadow:0 12px 24px rgba(0,0,0,0.05); }
-        .process-number { width:34px; height:34px; display:grid; place-items:center; background:var(--phx-black); color:#fff; font-weight:900; font-size:0.88rem; flex:0 0 auto; }
-        .process-title { color:var(--phx-black); font-weight:900; font-size:0.98rem; margin-bottom:0.25rem; }
-        .process-text { color:var(--phx-muted); font-size:0.86rem; line-height:1.46; }
-        .section-heading { margin:1.15rem 0 0.75rem; padding:0 0 0.65rem; border-bottom:1px solid var(--phx-line); }
-        .section-eyebrow { color:var(--phx-muted); font-size:0.75rem; letter-spacing:0.12em; text-transform:uppercase; font-weight:900; }
-        .section-title { color:var(--phx-black); font-size:1.42rem; font-weight:900; margin-top:0.15rem; letter-spacing:-0.02em; }
-        .section-subtitle { color:var(--phx-muted); font-size:0.94rem; line-height:1.6; margin-top:0.2rem; }
-        .panel-title { color:var(--phx-black); font-size:1.02rem; font-weight:900; margin-bottom:0.25rem; }
-        .panel-title::before { content:""; display:inline-block; width:9px; height:9px; background:var(--phx-yellow); margin-right:0.45rem; transform:translateY(-1px); }
-        .panel-subtitle { color:var(--phx-muted); font-size:0.88rem; margin-bottom:0.8rem; line-height:1.55; }
-        div[data-testid="stTextArea"] textarea { background-color:#fff!important; border:1px solid var(--phx-line)!important; border-left:5px solid var(--phx-yellow)!important; border-radius:0!important; color:var(--phx-ink)!important; min-height:232px!important; }
-        div[data-testid="stTextInput"] input, div[data-testid="stSelectbox"] div[data-baseweb="select"], div[data-testid="stMultiselect"] div[data-baseweb="select"] { background-color:#fff!important; border:1px solid var(--phx-line)!important; border-radius:0!important; color:var(--phx-ink)!important; }
-        div[data-testid="stFileUploader"] { background:#fff!important; border:1px solid var(--phx-line)!important; border-left:5px solid var(--phx-yellow)!important; border-radius:0!important; padding:22px!important; box-shadow:0 14px 28px rgba(0,0,0,0.04)!important; }
-        div[data-testid="stTextArea"] label, div[data-testid="stTextInput"] label, div[data-testid="stCheckbox"] label, div[data-testid="stSelectbox"] label, div[data-testid="stFileUploader"] label, div[data-testid="stMultiselect"] label, div[data-testid="stSlider"] label, div[data-testid="stRadio"] label { color:var(--phx-black)!important; font-weight:800!important; }
-        .stButton > button, div[data-testid="stDownloadButton"] > button { background:var(--phx-black)!important; color:#fff!important; border:1px solid var(--phx-black)!important; border-radius:0!important; font-weight:900!important; letter-spacing:0.04em!important; text-transform:uppercase!important; padding:0.86rem 1rem!important; box-shadow:0 14px 28px rgba(0,0,0,0.14); }
-        .stButton > button:hover, div[data-testid="stDownloadButton"] > button:hover { background:var(--phx-yellow)!important; border-color:var(--phx-yellow)!important; color:var(--phx-black)!important; }
-        .metric-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.9rem; margin:1.25rem 0 1rem; }
-        .metric-card { background:#fff; border:1px solid var(--phx-line); border-top:6px solid var(--phx-yellow); padding:1.1rem; box-shadow:0 12px 24px rgba(0,0,0,0.05); }
-        .metric-label { color:var(--phx-muted); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.09em; font-weight:900; margin-bottom:0.45rem; }
-        .metric-value { color:var(--phx-black); font-size:2rem; font-weight:900; line-height:1.1; }
-        .info-note { background:var(--phx-yellow-soft); border:1px solid #e8cc50; color:var(--phx-black); padding:0.92rem 1rem; font-size:0.93rem; margin-top:0.9rem; line-height:1.55; }
-        @media (max-width:900px) { .brand-row,.hero-section,.metric-grid { grid-template-columns:1fr; display:block; } .search-pill { display:none; } }
+
+        .block-container {
+            max-width: 1180px;
+            padding-top: 1rem;
+            padding-bottom: 2rem;
+        }
+
+        .phx-topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            background: #ffffff;
+            border: 1px solid var(--phx-line);
+            border-bottom: 0;
+            padding: 0.55rem 1rem;
+            color: var(--phx-muted);
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .topbar-links {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .phx-brandbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            background: #ffffff;
+            border: 1px solid var(--phx-line);
+            padding: 1rem;
+            margin-bottom: 0;
+        }
+
+        .phx-wordmark {
+            display: inline-flex;
+            align-items: stretch;
+            border: 1px solid var(--phx-black);
+            line-height: 1;
+            box-shadow: 0 8px 22px var(--phx-shadow);
+        }
+
+        .phx-wordmark span {
+            display: grid;
+            place-items: center;
+            min-height: 48px;
+            padding: 0.45rem 0.85rem;
+            color: var(--phx-black);
+            font-size: clamp(1.35rem, 2.6vw, 2.25rem);
+            font-weight: 900;
+            letter-spacing: -0.045em;
+        }
+
+        .phx-wordmark span:last-child {
+            background: var(--phx-yellow);
+        }
+
+        .phx-search {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.8rem;
+            min-width: 260px;
+            padding: 0.7rem 0.85rem;
+            background: var(--phx-soft);
+            border: 1px solid var(--phx-line);
+            color: var(--phx-muted);
+            font-size: 0.88rem;
+        }
+
+        .phx-search::after {
+            content: "";
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            background: var(--phx-yellow);
+            box-shadow: 0 0 0 5px rgba(255, 210, 0, 0.22);
+        }
+
+        .phx-nav {
+            display: flex;
+            flex-wrap: wrap;
+            background: #ffffff;
+            border: 1px solid var(--phx-line);
+            border-top: 0;
+            margin-bottom: 1rem;
+        }
+
+        .phx-nav div {
+            padding: 0.82rem 1rem;
+            border-right: 1px solid var(--phx-line);
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .phx-nav div:first-child {
+            background: var(--phx-yellow);
+        }
+
+        .hero-card {
+            position: relative;
+            overflow: hidden;
+            display: grid;
+            grid-template-columns: 1.35fr 0.65fr;
+            gap: 1.5rem;
+            align-items: center;
+            background:
+                linear-gradient(135deg, #ffffff 0%, #f6f5ef 60%, #ecebe6 100%);
+            border: 1px solid var(--phx-line);
+            padding: clamp(1.25rem, 3vw, 2.25rem);
+            margin-bottom: 1rem;
+            box-shadow: 0 18px 42px var(--phx-shadow);
+        }
+
+        .hero-card::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 6px;
+            background: var(--phx-yellow);
+        }
+
+        .hero-kicker {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            color: var(--phx-muted);
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .hero-kicker::before {
+            content: "";
+            width: 34px;
+            height: 5px;
+            background: var(--phx-yellow);
+        }
+
+        .hero-title {
+            margin: 0.8rem 0 0.65rem;
+            color: var(--phx-black);
+            font-size: clamp(2.15rem, 4.3vw, 4rem);
+            line-height: 0.98;
+            font-weight: 900;
+            letter-spacing: -0.05em;
+        }
+
+        .hero-copy {
+            max-width: 720px;
+            color: #505050;
+            font-size: 1.02rem;
+            line-height: 1.65;
+            margin-bottom: 1.1rem;
+        }
+
+        .hero-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .hero-pill {
+            background: #ffffff;
+            border: 1px solid var(--phx-line);
+            border-left: 5px solid var(--phx-yellow);
+            padding: 0.55rem 0.7rem;
+            font-size: 0.82rem;
+            font-weight: 800;
+        }
+
+        .hero-visual {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 220px;
+        }
+
+        .terminal-rail {
+            display: flex;
+            gap: 0.45rem;
+            align-items: center;
+            justify-content: center;
+            width: min(100%, 360px);
+            min-height: 205px;
+            background: linear-gradient(145deg, #ffffff 0%, #eeeeeb 100%);
+            border: 1px solid #d0d0cb;
+            box-shadow: 0 20px 38px rgba(0, 0, 0, 0.12);
+            transform: rotate(-2deg);
+        }
+
+        .terminal {
+            position: relative;
+            width: 48px;
+            height: 135px;
+            background: linear-gradient(180deg, var(--phx-yellow-2), var(--phx-yellow));
+            border: 1px solid #c8a600;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 15px rgba(0,0,0,0.08);
+        }
+
+        .terminal:nth-child(even) { transform: translateY(-7px); }
+        .terminal:nth-child(3) { transform: translateY(8px); }
+        .terminal::before, .terminal::after {
+            content: "";
+            position: absolute;
+            left: 10px;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 3px solid #222222;
+            box-sizing: border-box;
+        }
+        .terminal::before { top: 20px; }
+        .terminal::after { bottom: 20px; }
+
+        .step-grid, .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.8rem;
+            margin-bottom: 1.1rem;
+        }
+
+        .step-card, .metric-card, .phx-panel {
+            background: #ffffff;
+            border: 1px solid var(--phx-line);
+            box-shadow: 0 10px 24px rgba(0,0,0,0.045);
+        }
+
+        .step-card {
+            display: flex;
+            gap: 0.8rem;
+            padding: 1rem;
+            border-bottom: 4px solid var(--phx-yellow);
+            min-height: 94px;
+        }
+
+        .step-number {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            background: var(--phx-black);
+            color: #ffffff;
+            font-weight: 900;
+        }
+
+        .step-title {
+            color: var(--phx-black);
+            font-size: 0.98rem;
+            font-weight: 900;
+            margin-bottom: 0.25rem;
+        }
+
+        .step-text {
+            color: var(--phx-muted);
+            font-size: 0.86rem;
+            line-height: 1.45;
+        }
+
+        .phx-section-title {
+            margin: 1.2rem 0 0.7rem;
+            padding-bottom: 0.65rem;
+            border-bottom: 1px solid var(--phx-line);
+        }
+
+        .phx-eyebrow {
+            color: var(--phx-muted);
+            font-size: 0.74rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.13em;
+        }
+
+        .phx-section-title h2 {
+            margin: 0.15rem 0 0;
+            color: var(--phx-black);
+            font-size: 1.42rem;
+            line-height: 1.2;
+            font-weight: 900;
+            letter-spacing: -0.025em;
+        }
+
+        .phx-section-title p {
+            margin: 0.25rem 0 0;
+            color: var(--phx-muted);
+            font-size: 0.94rem;
+            line-height: 1.55;
+        }
+
+        .panel-title {
+            margin-bottom: 0.22rem;
+            color: var(--phx-black);
+            font-size: 1.02rem;
+            font-weight: 900;
+        }
+
+        .panel-title::before {
+            content: "";
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            margin-right: 0.45rem;
+            background: var(--phx-yellow);
+            transform: translateY(-1px);
+        }
+
+        .panel-subtitle {
+            margin-bottom: 0.85rem;
+            color: var(--phx-muted);
+            font-size: 0.88rem;
+            line-height: 1.5;
+        }
+
+        .url-preview {
+            background: #ffffff;
+            border: 1px solid var(--phx-line);
+            border-left: 5px solid var(--phx-yellow);
+            padding: 0.85rem 1rem;
+            color: var(--phx-muted);
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin-top: 0.8rem;
+        }
+
+        .info-note {
+            background: #fff6bf;
+            border: 1px solid #e7c94c;
+            color: var(--phx-black);
+            padding: 0.9rem 1rem;
+            line-height: 1.55;
+            margin-top: 0.9rem;
+        }
+
+        .metric-card {
+            border-top: 6px solid var(--phx-yellow);
+            padding: 1rem;
+        }
+
+        .metric-card span {
+            display: block;
+            color: var(--phx-muted);
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 900;
+            margin-bottom: 0.3rem;
+        }
+
+        .metric-card strong {
+            color: var(--phx-black);
+            font-size: 2rem;
+            line-height: 1;
+        }
+
+        div[data-testid="stTextArea"] textarea,
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stSelectbox"] div[data-baseweb="select"],
+        div[data-testid="stMultiselect"] div[data-baseweb="select"] {
+            background-color: #ffffff !important;
+            border: 1px solid var(--phx-line) !important;
+            border-radius: 0 !important;
+            color: var(--phx-ink) !important;
+            box-shadow: none !important;
+        }
+
+        div[data-testid="stTextArea"] textarea {
+            min-height: 232px !important;
+            border-left: 5px solid var(--phx-yellow) !important;
+        }
+
+        div[data-testid="stFileUploader"] {
+            background: #ffffff !important;
+            border: 1px solid var(--phx-line) !important;
+            border-left: 5px solid var(--phx-yellow) !important;
+            border-radius: 0 !important;
+            padding: 1rem !important;
+            min-height: 190px !important;
+        }
+
+        div[data-testid="stTextArea"] label,
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stCheckbox"] label,
+        div[data-testid="stSelectbox"] label,
+        div[data-testid="stFileUploader"] label,
+        div[data-testid="stMultiselect"] label,
+        div[data-testid="stSlider"] label,
+        div[data-testid="stRadio"] label {
+            color: var(--phx-black) !important;
+            font-weight: 800 !important;
+        }
+
+        .stButton > button,
+        div[data-testid="stDownloadButton"] > button {
+            background: var(--phx-black) !important;
+            color: #ffffff !important;
+            border: 1px solid var(--phx-black) !important;
+            border-radius: 0 !important;
+            font-weight: 900 !important;
+            letter-spacing: 0.04em !important;
+            text-transform: uppercase !important;
+            padding: 0.85rem 1rem !important;
+            box-shadow: 0 12px 24px rgba(0,0,0,0.12) !important;
+        }
+
+        .stButton > button:hover,
+        div[data-testid="stDownloadButton"] > button:hover {
+            background: var(--phx-yellow) !important;
+            border-color: var(--phx-yellow) !important;
+            color: var(--phx-black) !important;
+        }
+
+        div[data-testid="stExpander"] {
+            border: 1px solid var(--phx-line);
+            border-radius: 0;
+            background: #ffffff;
+        }
+
+        .footer-note {
+            text-align: center;
+            color: var(--phx-muted);
+            font-size: 0.8rem;
+            margin-top: 1.4rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        @media (max-width: 900px) {
+            .phx-brandbar, .hero-card { grid-template-columns: 1fr; display: block; }
+            .phx-search { display: none; }
+            .hero-visual { margin-top: 1rem; }
+            .step-grid, .metric-grid { grid-template-columns: 1fr; }
+            .phx-topbar { align-items: flex-start; flex-direction: column; }
+        }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-
 # -----------------------------------------------------------------------------
-# Header
+# Header and hero
 # -----------------------------------------------------------------------------
 st.markdown(
     """
-    <div class="phx-shell">
-        <div class="utility-bar"><span>Products</span><span>Solutions</span><span>Support</span><span>Downloads</span></div>
-        <div class="brand-row">
-            <div class="brand-lockup"><div class="brand-phoenix">PHOENIX</div><div class="brand-contact">CONTACT</div></div>
-            <div class="search-pill"><span>Search product documentation</span><span class="search-dot"></span></div>
+    <div class="phx-topbar">
+        <div>Product documentation</div>
+        <div class="topbar-links">
+            <span>Products</span><span>Solutions</span><span>Service & Support</span><span>Downloads</span>
         </div>
-        <div class="nav-row"><div class="nav-item">Product documentation</div><div class="nav-item">Technical data</div><div class="nav-item">Drawings</div><div class="nav-item">Classifications</div><div class="nav-item">Accessories</div></div>
+    </div>
+    <div class="phx-brandbar">
+        <div class="phx-wordmark" aria-label="Phoenix Contact inspired wordmark">
+            <span>PHOENIX</span><span>CONTACT</span>
+        </div>
+        <div class="phx-search">Search product documentation</div>
+    </div>
+    <div class="phx-nav">
+        <div>Datasheet Builder</div><div>Technical Data</div><div>Drawings</div><div>Classifications</div><div>Accessories</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -647,36 +1077,48 @@ st.markdown(
 
 st.markdown(
     """
-    <div class="hero-section">
+    <div class="hero-card">
         <div>
-            <div class="hero-kicker">Phoenix Contact product documentation</div>
+            <div class="hero-kicker">Phoenix Contact PDF automation</div>
             <div class="hero-title">Datasheet pack builder</div>
-            <div class="hero-copy">Enter Phoenix Contact item codes, choose PDF sections, use fast browser-based retrieval, and generate one consolidated pack.</div>
-            <div class="hero-tags"><div class="hero-tag">PHX item codes</div><div class="hero-tag">Excel import</div><div class="hero-tag">Fast browser fetch</div><div class="hero-tag">Merged pack</div></div>
+            <div class="hero-copy">
+                Build one consolidated PDF from Phoenix Contact item codes. Paste codes or import an Excel list,
+                choose the documentation sections, and generate a clean merged pack.
+            </div>
+            <div class="hero-pills">
+                <div class="hero-pill">PHX item codes</div>
+                <div class="hero-pill">Excel import</div>
+                <div class="hero-pill">Selectable sections</div>
+                <div class="hero-pill">Merged PDF output</div>
+            </div>
         </div>
-        <div class="hero-visual"><div class="terminal-card"><div class="terminal-block"></div><div class="terminal-block"></div><div class="terminal-block"></div><div class="terminal-block"></div></div></div>
+        <div class="hero-visual" aria-hidden="true">
+            <div class="terminal-rail">
+                <div class="terminal"></div><div class="terminal"></div><div class="terminal"></div><div class="terminal"></div>
+            </div>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-cols = st.columns(3)
-with cols[0]:
-    render_step("01", "Add codes", "Paste PHX codes manually or import them from an Excel column.")
-with cols[1]:
-    render_step("02", "Choose sections", "Select which Phoenix Contact PDF blocks are included.")
-with cols[2]:
-    render_step("03", "Build pack", "Fast mode fetches PDFs inside Chrome and falls back to file download only when needed.")
-
+st.markdown('<div class="step-grid">', unsafe_allow_html=True)
+step_cols = st.columns(3)
+with step_cols[0]:
+    render_step("01", "Add codes", "Paste PHX codes manually or import an Excel column.")
+with step_cols[1]:
+    render_step("02", "Choose content", "Select the Phoenix Contact blocks included in every PDF.")
+with step_cols[2]:
+    render_step("03", "Build pack", "Download, validate, merge, and export one consolidated file.")
+st.markdown('</div>', unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Input section
+# Inputs
 # -----------------------------------------------------------------------------
-st.markdown(
-    """
-    <div class="section-heading"><div class="section-eyebrow">Build your PDF pack</div><div class="section-title">Codes and source file</div><div class="section-subtitle">Manual codes and Excel codes are combined automatically. Duplicates are removed while keeping the first occurrence.</div></div>
-    """,
-    unsafe_allow_html=True,
+phx_section(
+    "Build your PDF pack",
+    "Codes and source file",
+    "Manual codes and Excel codes are combined automatically. Duplicates are removed while keeping the first occurrence.",
 )
 
 manual_codes: List[str] = []
@@ -684,12 +1126,29 @@ excel_codes: List[str] = []
 input_col1, input_col2 = st.columns(2)
 
 with input_col1:
-    st.markdown("""<div class="panel-title">Paste item codes</div><div class="panel-subtitle">Enter one code per line, or separate them with commas, spaces, or semicolons. The app accepts PHX-3010110 or 3010110.</div>""", unsafe_allow_html=True)
-    codes_text = st.text_area("Paste item codes", height=232, placeholder="Example:\nPHX-3010110\nPHX-3201853\nPHX-3213140", label_visibility="collapsed")
+    st.markdown(
+        """
+        <div class="panel-title">Paste item codes</div>
+        <div class="panel-subtitle">Use one code per line, or separate codes with commas, spaces, or semicolons. Accepted examples: PHX-3010110, 3010110.</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    codes_text = st.text_area(
+        "Paste item codes",
+        height=232,
+        placeholder="Example:\nPHX-3010110\nPHX-3201853\nPHX-3213140",
+        label_visibility="collapsed",
+    )
     manual_codes = normalize_codes(codes_text.splitlines())
 
 with input_col2:
-    st.markdown("""<div class="panel-title">Upload Excel file</div><div class="panel-subtitle">Upload your Excel file, then choose the column containing Phoenix Contact item codes.</div>""", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="panel-title">Upload Excel file</div>
+        <div class="panel-subtitle">Upload an .xlsx or .xls file, then select the column that contains Phoenix Contact item codes.</div>
+        """,
+        unsafe_allow_html=True,
+    )
     uploaded_excel = st.file_uploader("Upload Excel file", type=["xlsx", "xls"], label_visibility="collapsed")
     if uploaded_excel is not None:
         try:
@@ -698,26 +1157,35 @@ with input_col2:
                 st.warning("The uploaded Excel file is empty.")
             else:
                 column_options = excel_df.columns.tolist()
-                selected_column = st.selectbox("Select the column containing item codes", options=column_options, index=pick_default_excel_column(column_options))
+                selected_column = st.selectbox(
+                    "Select the column containing item codes",
+                    options=column_options,
+                    index=pick_default_excel_column(column_options),
+                )
                 excel_codes = extract_codes_from_selected_column(excel_df, selected_column)
                 st.caption(f"{len(excel_codes)} code(s) detected from Excel.")
         except Exception as exc:
             st.error(f"Could not read Excel file: {exc}")
 
-
 # -----------------------------------------------------------------------------
-# PDF blocks
+# PDF content
 # -----------------------------------------------------------------------------
-st.markdown(
-    """
-    <div class="section-heading"><div class="section-eyebrow">PDF content</div><div class="section-title">Choose what to include</div><div class="section-subtitle">These selected blocks are added to the Phoenix Contact PDF URL for every item in the current pack.</div></div>
-    """,
-    unsafe_allow_html=True,
+phx_section(
+    "PDF content",
+    "Choose what to include",
+    "The selected blocks are inserted into the Phoenix Contact URL for every item in the current pack.",
 )
+
 block_label_to_key = {label: key for key, label, _ in PDF_BLOCK_OPTIONS}
 all_block_labels = [label for _, label, _ in PDF_BLOCK_OPTIONS]
-selected_block_labels = st.multiselect("PDF sections", options=all_block_labels, default=all_block_labels)
+selected_block_labels = st.multiselect(
+    "PDF sections",
+    options=all_block_labels,
+    default=all_block_labels,
+    help="Changing this selection edits the blocks=... part of every generated Phoenix Contact PDF URL.",
+)
 selected_blocks = [block_label_to_key[label] for label in all_block_labels if label in selected_block_labels]
+
 with st.expander("Section details", expanded=False):
     for key, label, description in PDF_BLOCK_OPTIONS:
         st.markdown(f"**{label}** (`{key}`): {description}")
@@ -726,63 +1194,69 @@ all_codes_preview = normalize_codes(manual_codes + excel_codes)
 if all_codes_preview and selected_blocks:
     preview_code = all_codes_preview[0]
     preview_url = build_phoenix_pdf_url(preview_code, selected_blocks, action="VIEW")
-    st.info(f"Preview for PHX-{preview_code}: encoded API code is {encode_item_number_for_phoenix(preview_code)}")
+    st.markdown(
+        f"""
+        <div class="url-preview">
+            Preview for <strong>PHX-{preview_code}</strong>: encoded API code
+            <strong>{encode_item_number_for_phoenix(preview_code)}</strong>. The link uses <strong>action=VIEW</strong>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.code(preview_url, language="text")
-
 
 # -----------------------------------------------------------------------------
 # Settings
 # -----------------------------------------------------------------------------
-st.markdown(
-    """
-    <div class="section-heading"><div class="section-eyebrow">Pack settings</div><div class="section-title">Fast retrieval, cover, and output</div><div class="section-subtitle">Fast mode opens Chrome once per worker, fetches PDF bytes inside the browser, and only uses Chrome's file download as fallback.</div></div>
-    """,
-    unsafe_allow_html=True,
+phx_section(
+    "Pack settings",
+    "Retrieval, cover, and output",
+    "Fast mode fetches PDF bytes inside Chrome and uses the proven Selenium file download method only as fallback.",
 )
+
 settings_col1, settings_col2 = st.columns(2)
 with settings_col1:
     keep_going = st.checkbox("Skip failed codes and continue", value=True)
     include_cover = st.checkbox("Add cover page if available", value=False)
     output_name = st.text_input("Output file name", value="phoenix_contact_datasheet_pack.pdf")
 with settings_col2:
-    uploaded_cover = st.file_uploader("Use another cover page (optional)", type=["pdf"], help="Leave empty to use cover.pdf from the repository root when cover pages are enabled.")
+    uploaded_cover = st.file_uploader(
+        "Use another cover page (optional)",
+        type=["pdf"],
+        help="Leave empty to use cover.pdf from the repository root when cover pages are enabled.",
+    )
 
 with st.expander("Advanced Chrome settings", expanded=False):
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3 = st.columns(3)
     with c1:
         realm = st.text_input("Realm", value=DEFAULT_REALM)
-    with c2:
         locale = st.text_input("Locale", value=DEFAULT_LOCALE)
-    with c3:
+    with c2:
         headless = st.checkbox("Run Chrome headless", value=True, help="Use True on Streamlit Cloud. Use False locally to see Chrome.")
-    with c4:
         timeout_seconds = st.slider("Timeout", min_value=30, max_value=180, value=DEFAULT_TIMEOUT_SECONDS, step=10)
-    with c5:
-        browser_workers = st.slider("Chrome workers", min_value=1, max_value=4, value=1, help="Fast mode usually needs only 1 worker. Try 2 only if many items and enough RAM.")
+    with c3:
+        browser_workers = st.slider("Chrome workers", min_value=1, max_value=4, value=1, help="Fast mode usually needs one worker. Use two only if your host has enough RAM.")
 
 engine_label = st.radio(
     "Download engine",
-    options=[
-        "Fast browser fetch + Selenium fallback",
-        "Selenium file download only",
-    ],
+    options=["Fast browser fetch + Selenium fallback", "Selenium file download only"],
     index=0,
     horizontal=True,
-    help="Use the first option for speed. Use Selenium file download only if the fast mode fails on your deployment.",
+    help="Use the first option for speed. Use Selenium-only only if fast mode fails in your deployment.",
 )
 engine = "selenium_file_download_only" if engine_label.startswith("Selenium") else "fast_browser_fetch_with_fallback"
 
 st.markdown(
     """
     <div class="info-note">
-        Speed note: the working Selenium-only method is slow because it waits for a physical Chrome download for every PDF. Fast mode keeps the same Chrome/browser trust path, but transfers PDF bytes directly from the browser to Streamlit and falls back to file download only if a specific item fails.
+        Code conversion example: <strong>PHX-3201853</strong> becomes <strong>3201853</strong>, then Base64 becomes
+        <strong>MzIwMTg1Mw</strong>. The selected sections are added to <strong>blocks=...</strong> for each product PDF.
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 run_clicked = st.button("Build PDF Pack", type="primary", use_container_width=True)
-
 
 # -----------------------------------------------------------------------------
 # Action
@@ -837,7 +1311,13 @@ if run_clicked:
     try:
         merged_pdf = merge_pdf_bytes(downloaded_pdfs, cover_pdf_bytes=cover_pdf_bytes)
         st.success("Your consolidated Phoenix Contact PDF pack is ready.")
-        st.download_button("Download Merged PDF", data=merged_pdf, file_name=ensure_pdf_filename(output_name), mime="application/pdf", use_container_width=True)
+        st.download_button(
+            "Download Merged PDF",
+            data=merged_pdf,
+            file_name=ensure_pdf_filename(output_name),
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
         with st.expander("Downloaded items", expanded=False):
             st.dataframe(success_rows, use_container_width=True)
@@ -849,8 +1329,22 @@ if run_clicked:
         if report_rows:
             report_df = pd.DataFrame(report_rows)
             csv_bytes = report_df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download Download Report CSV", data=csv_bytes, file_name="phoenix_contact_download_report.csv", mime="text/csv", use_container_width=True)
+            st.download_button(
+                "Download Report CSV",
+                data=csv_bytes,
+                file_name="phoenix_contact_download_report.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
     except Exception as exc:
         st.error(f"Failed to merge PDFs: {exc}")
 
-st.markdown("""<div style="text-align:center;color:#6b6b6b;font-size:0.82rem;margin-top:1.4rem;letter-spacing:0.04em;text-transform:uppercase;">Built for fast retrieval and packaging of Phoenix Contact product documentation.</div>""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="footer-note">
+        Built for fast retrieval and packaging of Phoenix Contact product documentation.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
