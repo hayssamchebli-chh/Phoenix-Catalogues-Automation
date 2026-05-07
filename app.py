@@ -1010,7 +1010,7 @@ st.markdown(
             <div class="hero-kicker">Phoenix Contact product documentation</div>
             <div class="hero-title">Datasheet pack builder</div>
             <div class="hero-copy">
-                Enter Phoenix Contact item codes such as PHX-3201853, choose the PDF sections
+                Enter Phoenix Contact item codes, choose the PDF sections
                 to include, download the product PDFs automatically, and generate one consolidated pack.
             </div>
             <div class="hero-tags">
