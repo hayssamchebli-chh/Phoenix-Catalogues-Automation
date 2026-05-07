@@ -1466,7 +1466,7 @@ settings_col1, settings_col2 = st.columns(2)
 
 with settings_col1:
     keep_going = st.checkbox("Skip failed codes and continue", value=True)
-    include_cover = st.checkbox("Add cover page if available", value=False)
+    include_cover = st.checkbox("Add cover page", value=True)
     output_name = st.text_input("Output file name", value="phoenix_contact_datasheet_pack.pdf")
 
 with settings_col2:
