@@ -4,6 +4,7 @@ import re
 import shutil
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -318,10 +319,10 @@ def wait_for_pdf_download(download_dir: Path, timeout_seconds: int) -> Tuple[Opt
         if pdf_files and not partial_files:
             newest_pdf = max(pdf_files, key=lambda p: p.stat().st_mtime)
             # Give Chrome a short moment to fully flush the file.
-            time.sleep(0.4)
+            time.sleep(0.15)
             return newest_pdf, ""
 
-        time.sleep(1)
+        time.sleep(0.25)
 
     return None, f"Download did not finish within {timeout_seconds} seconds. Files: {last_seen}"
 
@@ -361,6 +362,104 @@ def selenium_download_pdf_bytes(
     return True, trim_to_pdf_start(pdf_bytes), ""
 
 
+def download_one_code_with_existing_driver(
+    driver: webdriver.Chrome,
+    download_dir: Path,
+    index: int,
+    code: str,
+    selected_blocks: Sequence[str],
+    realm: str,
+    locale: str,
+    timeout_seconds: int,
+) -> Dict[str, object]:
+    """Download one PDF using an already-open Chrome driver."""
+    encoded = encode_item_number_for_phoenix(code)
+    url = build_phoenix_pdf_url(
+        code,
+        selected_blocks,
+        realm=realm,
+        locale=locale,
+        action="VIEW",
+    )
+
+    ok, pdf_bytes, error_message = selenium_download_pdf_bytes(
+        driver=driver,
+        download_dir=download_dir,
+        url=url,
+        timeout_seconds=timeout_seconds,
+    )
+
+    return {
+        "index": index,
+        "code": code,
+        "encoded": encoded,
+        "ok": ok,
+        "pdf_bytes": pdf_bytes,
+        "used_url": url,
+        "error": error_message,
+    }
+
+
+def download_chunk_with_one_browser(
+    chunk: List[Tuple[int, str]],
+    selected_blocks: Sequence[str],
+    realm: str,
+    locale: str,
+    headless: bool,
+    timeout_seconds: int,
+) -> List[Dict[str, object]]:
+    """A worker: open one Chrome browser, download several PDFs, then close it."""
+    chunk_results: List[Dict[str, object]] = []
+
+    with tempfile.TemporaryDirectory(prefix="phoenix_contact_downloads_") as tmp:
+        download_dir = Path(tmp)
+        driver = create_selenium_driver(download_dir, headless=headless)
+
+        try:
+            for index, code in chunk:
+                try:
+                    result = download_one_code_with_existing_driver(
+                        driver=driver,
+                        download_dir=download_dir,
+                        index=index,
+                        code=code,
+                        selected_blocks=selected_blocks,
+                        realm=realm,
+                        locale=locale,
+                        timeout_seconds=timeout_seconds,
+                    )
+                except Exception as exc:
+                    result = {
+                        "index": index,
+                        "code": code,
+                        "encoded": encode_item_number_for_phoenix(code),
+                        "ok": False,
+                        "pdf_bytes": None,
+                        "used_url": build_phoenix_pdf_url(
+                            code,
+                            selected_blocks,
+                            realm=realm,
+                            locale=locale,
+                            action="VIEW",
+                        ),
+                        "error": str(exc),
+                    }
+
+                chunk_results.append(result)
+        finally:
+            driver.quit()
+
+    return chunk_results
+
+
+def split_work_round_robin(codes: List[str], browser_workers: int) -> List[List[Tuple[int, str]]]:
+    """Distribute items across browser workers while preserving original index metadata."""
+    chunks: List[List[Tuple[int, str]]] = [[] for _ in range(browser_workers)]
+    for index, code in enumerate(codes):
+        chunks[index % browser_workers].append((index, code))
+    return [chunk for chunk in chunks if chunk]
+
+
 def download_pdfs_with_selenium(
     codes: List[str],
     selected_blocks: Sequence[str],
@@ -368,66 +467,91 @@ def download_pdfs_with_selenium(
     locale: str,
     headless: bool,
     timeout_seconds: int,
+    browser_workers: int = 1,
 ):
+    """Download PDFs with Selenium.
+
+    Speed notes:
+    - browser_workers=1 opens one Chrome instance and downloads sequentially.
+    - browser_workers=2 or 3 opens multiple Chrome instances and downloads in parallel.
+      This is much faster for large packs, but uses more RAM/CPU. On Streamlit Cloud,
+      2 is usually safer than 3 or 4.
+    """
     downloaded_pdfs: List[bytes] = []
     success_rows: List[Dict[str, object]] = []
     failed_rows: List[Dict[str, object]] = []
+    results: List[Dict[str, object]] = []
 
-    with tempfile.TemporaryDirectory(prefix="phoenix_contact_downloads_") as tmp:
-        download_dir = Path(tmp)
-        driver = create_selenium_driver(download_dir, headless=headless)
+    safe_workers = max(1, min(int(browser_workers), len(codes)))
+    chunks = split_work_round_robin(codes, safe_workers)
 
-        try:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    completed = 0
 
-            for index, code in enumerate(codes, start=1):
-                encoded = encode_item_number_for_phoenix(code)
-                url = build_phoenix_pdf_url(
-                    code,
+    if safe_workers == 1:
+        status_text.info("Opening Chrome and downloading PDFs...")
+        results = download_chunk_with_one_browser(
+            chunk=chunks[0],
+            selected_blocks=selected_blocks,
+            realm=realm,
+            locale=locale,
+            headless=headless,
+            timeout_seconds=timeout_seconds,
+        )
+        completed = len(results)
+        progress_bar.progress(1.0)
+    else:
+        status_text.info(f"Opening {safe_workers} Chrome workers and downloading PDFs in parallel...")
+        with ThreadPoolExecutor(max_workers=safe_workers) as executor:
+            future_to_count = {
+                executor.submit(
+                    download_chunk_with_one_browser,
+                    chunk,
                     selected_blocks,
-                    realm=realm,
-                    locale=locale,
-                    action="VIEW",
-                )
+                    realm,
+                    locale,
+                    headless,
+                    timeout_seconds,
+                ): len(chunk)
+                for chunk in chunks
+            }
 
-                status_text.info(f"Downloading {index} of {len(codes)} - PHX-{code}")
-                ok, pdf_bytes, error_message = selenium_download_pdf_bytes(
-                    driver=driver,
-                    download_dir=download_dir,
-                    url=url,
-                    timeout_seconds=timeout_seconds,
-                )
+            for future in as_completed(future_to_count):
+                chunk_count = future_to_count[future]
+                chunk_results = future.result()
+                results.extend(chunk_results)
+                completed += chunk_count
+                status_text.info(f"Downloaded batch progress: {completed} of {len(codes)} items processed")
+                progress_bar.progress(completed / len(codes))
 
-                if ok and pdf_bytes:
-                    downloaded_pdfs.append(pdf_bytes)
-                    success_rows.append(
-                        {
-                            "Input code": f"PHX-{code}",
-                            "Item number": code,
-                            "Encoded API code": encoded,
-                            "Status": "Downloaded",
-                            "Source URL": url,
-                        }
-                    )
-                else:
-                    failed_rows.append(
-                        {
-                            "Input code": f"PHX-{code}",
-                            "Item number": code,
-                            "Encoded API code": encoded,
-                            "Status": "Failed",
-                            "Error": error_message,
-                            "Source URL": url,
-                        }
-                    )
+    status_text.empty()
 
-                progress_bar.progress(index / len(codes))
+    results.sort(key=lambda x: int(x["index"]))
 
-            status_text.empty()
-
-        finally:
-            driver.quit()
+    for result in results:
+        if result["ok"] and result["pdf_bytes"]:
+            downloaded_pdfs.append(result["pdf_bytes"])
+            success_rows.append(
+                {
+                    "Input code": f"PHX-{result['code']}",
+                    "Item number": result["code"],
+                    "Encoded API code": result["encoded"],
+                    "Status": "Downloaded",
+                    "Source URL": result["used_url"],
+                }
+            )
+        else:
+            failed_rows.append(
+                {
+                    "Input code": f"PHX-{result['code']}",
+                    "Item number": result["code"],
+                    "Encoded API code": result.get("encoded", ""),
+                    "Status": "Failed",
+                    "Error": result.get("error", "Unknown error"),
+                    "Source URL": result.get("used_url", ""),
+                }
+            )
 
     return downloaded_pdfs, success_rows, failed_rows
 
@@ -683,7 +807,7 @@ with settings_col2:
     uploaded_cover = st.file_uploader("Use another cover page (optional)", type=["pdf"], help="Leave empty to use cover.pdf from the repository root when cover pages are enabled.")
 
 with st.expander("Advanced Selenium / Chrome settings", expanded=False):
-    advanced_col1, advanced_col2, advanced_col3, advanced_col4 = st.columns(4)
+    advanced_col1, advanced_col2, advanced_col3, advanced_col4, advanced_col5 = st.columns(5)
     with advanced_col1:
         realm = st.text_input("Realm", value=DEFAULT_REALM)
     with advanced_col2:
@@ -692,6 +816,8 @@ with st.expander("Advanced Selenium / Chrome settings", expanded=False):
         headless = st.checkbox("Run Chrome headless", value=True, help="Use True on Streamlit Cloud. Use False locally if you want to see the Chrome window.")
     with advanced_col4:
         timeout_seconds = st.slider("Download timeout", min_value=30, max_value=180, value=DEFAULT_DOWNLOAD_TIMEOUT_SECONDS, step=10)
+    with advanced_col5:
+        browser_workers = st.slider("Chrome workers", min_value=1, max_value=4, value=2, help="Use 2 on Streamlit Cloud for better speed. Use 1 if memory is limited.")
 
 st.markdown(
     """
@@ -731,6 +857,7 @@ if run_clicked:
             locale=locale.strip() or DEFAULT_LOCALE,
             headless=headless,
             timeout_seconds=timeout_seconds,
+            browser_workers=browser_workers,
         )
     except Exception as exc:
         st.error(f"Chrome/Selenium failed before downloads could complete: {exc}")
