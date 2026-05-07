@@ -1443,10 +1443,7 @@ selected_blocks = [
     if label in selected_block_labels
 ]
 
-with st.expander("Section details", expanded=False):
-    for key, label, description in PDF_BLOCK_OPTIONS:
-        selected_marker = "Selected by default" if label in DEFAULT_SELECTED_BLOCK_LABELS else "Optional"
-        st.markdown(f"**{label}** (`{key}`): {description} — _{selected_marker}_")
+
 
 all_codes_preview = normalize_codes(manual_codes + excel_codes)
 
