@@ -10,6 +10,11 @@ from urllib.parse import urlencode
 import pandas as pd
 import requests
 import streamlit as st
+
+try:
+    from curl_cffi import requests as curl_requests
+except Exception:  # curl_cffi is optional but recommended on Streamlit Cloud
+    curl_requests = None
 from pypdf import PdfReader, PdfWriter
 
 
@@ -19,7 +24,7 @@ from pypdf import PdfReader, PdfWriter
 BASE_PDF_API_URL = "https://www.phoenixcontact.com/product/pdf/api/v1/{encoded_code}"
 DEFAULT_REALM = "pc"
 DEFAULT_LOCALE = "en-PC"
-PHOENIX_ACTIONS = ["DOWNLOAD", "VIEW"]  # Use DOWNLOAD for server-side fetching; fall back to VIEW if needed.
+PHOENIX_ACTIONS = ["VIEW", "DOWNLOAD"]  # VIEW is the URL users can open; DOWNLOAD is kept as a fallback.
 DEFAULT_TIMEOUT = (20, 90)
 PDF_DOWNLOAD_RETRIES = 3
 
@@ -219,22 +224,47 @@ def get_cover_pdf_bytes(uploaded_cover, include_cover: bool) -> Tuple[Optional[b
     return None, None, "No cover.pdf was found. The pack will be created without a cover page."
 
 
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.phoenixcontact.com/",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+
 def get_session() -> requests.Session:
     session = requests.Session()
-    session.headers.update(
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"
-            ),
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.phoenixcontact.com/",
-            "Connection": "keep-alive",
-        }
-    )
+    session.headers.update(BROWSER_HEADERS)
     return session
+
+
+def fetch_pdf_url(session: requests.Session, url: str):
+    """Fetch Phoenix Contact PDF URL.
+
+    Phoenix Contact links open normally in a browser, but hosted Python requests can
+    sometimes receive a non-PDF response because the server/CDN treats plain
+    requests differently. curl_cffi impersonates Chrome's TLS/browser fingerprint,
+    which is much closer to what happens when the user opens the same VIEW link.
+    """
+    if curl_requests is not None:
+        return curl_requests.get(
+            url,
+            headers=BROWSER_HEADERS,
+            timeout=DEFAULT_TIMEOUT[1],
+            allow_redirects=True,
+            impersonate="chrome124",
+        )
+
+    return session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
 
 
 def download_pdf_bytes_for_code(
@@ -265,10 +295,16 @@ def download_pdf_bytes_for_code(
         last_url = url
         for attempt in range(1, PDF_DOWNLOAD_RETRIES + 1):
             try:
-                response = session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
+                response = fetch_pdf_url(session, url)
 
                 if response.status_code != 200:
-                    last_error = f"HTTP {response.status_code}"
+                    content_type = response.headers.get("Content-Type", "")
+                    snippet = ""
+                    try:
+                        snippet = response.text[:220].replace("\n", " ")
+                    except Exception:
+                        pass
+                    last_error = f"HTTP {response.status_code}. Content-Type: {content_type}. {snippet}"
                     time.sleep(0.6 * attempt)
                     continue
 
@@ -788,4 +824,3 @@ if run_clicked:
         st.error(f"Failed to merge PDFs: {exc}")
 
 st.markdown('<div class="footer-note">Built for fast retrieval and packaging of Phoenix Contact product documentation.</div>', unsafe_allow_html=True)
-
