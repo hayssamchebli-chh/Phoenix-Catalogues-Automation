@@ -125,7 +125,7 @@ def build_phoenix_pdf_url(
             ("_realm", realm),
             ("_locale", locale),
             ("blocks", ",".join(selected_blocks)),
-            ("action", "Downlaod"),
+            ("action", "DOWNLOAD"),
         ]
     )
     return f"{BASE_PDF_API_URL.format(encoded_code=encoded_code)}?{query}"
