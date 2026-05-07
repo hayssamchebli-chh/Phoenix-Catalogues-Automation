@@ -1556,7 +1556,6 @@ engine_label = st.radio(
 
 engine = "selenium_file_download_only" if engine_label.startswith("Selenium") else "fast_browser_fetch_with_fallback"
 
-,
     unsafe_allow_html=True,
 
 
