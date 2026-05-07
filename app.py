@@ -19,7 +19,7 @@ from pypdf import PdfReader, PdfWriter
 BASE_PDF_API_URL = "https://www.phoenixcontact.com/product/pdf/api/v1/{encoded_code}"
 DEFAULT_REALM = "pc"
 DEFAULT_LOCALE = "en-PC"
-PHOENIX_ACTION = "VIEW"  # The Phoenix endpoint displays a PDF, but requests can still download the bytes.
+PHOENIX_ACTIONS = ["DOWNLOAD", "VIEW"]  # Use DOWNLOAD for server-side fetching; fall back to VIEW if needed.
 DEFAULT_TIMEOUT = (20, 90)
 PDF_DOWNLOAD_RETRIES = 3
 
@@ -98,11 +98,12 @@ def build_phoenix_pdf_url(
     selected_blocks: Sequence[str],
     realm: str = DEFAULT_REALM,
     locale: str = DEFAULT_LOCALE,
+    action: str = "DOWNLOAD",
 ) -> str:
-    """Build the Phoenix Contact PDF VIEW URL.
+    """Build a Phoenix Contact PDF API URL.
 
-    Phoenix shows this URL in the browser as a PDF. The app downloads the same URL
-    as bytes with requests, then merges the bytes with pypdf.
+    For automated server-side downloading, DOWNLOAD is more reliable than VIEW.
+    VIEW can open in a browser, but it may return a viewer/inline response in some hosted environments.
     """
     if not selected_blocks:
         raise ValueError("At least one PDF content section must be selected.")
@@ -113,7 +114,7 @@ def build_phoenix_pdf_url(
             ("_realm", realm),
             ("_locale", locale),
             ("blocks", ",".join(selected_blocks)),
-            ("action", PHOENIX_ACTION),
+            ("action", action),
         ]
     )
     return f"{BASE_PDF_API_URL.format(encoded_code=encoded_code)}?{query}"
@@ -243,41 +244,55 @@ def download_pdf_bytes_for_code(
     realm: str,
     locale: str,
 ) -> Tuple[bool, Optional[bytes], str, str]:
-    """Download the PDF bytes from the Phoenix Contact VIEW URL."""
+    """Download one Phoenix Contact PDF as bytes.
+
+    The app tries action=DOWNLOAD first because it is the API mode that reliably
+    returns application/pdf for server-side requests. If that fails, it retries
+    action=VIEW so browser-only behavior still has a fallback.
+    """
     try:
-        url = build_phoenix_pdf_url(code, selected_blocks, realm=realm, locale=locale)
+        urls = [
+            build_phoenix_pdf_url(code, selected_blocks, realm=realm, locale=locale, action=action)
+            for action in PHOENIX_ACTIONS
+        ]
     except Exception as exc:
         return False, None, "", str(exc)
 
     last_error = "PDF was not downloaded."
-    for attempt in range(1, PDF_DOWNLOAD_RETRIES + 1):
-        try:
-            response = session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
+    last_url = urls[0] if urls else ""
 
-            if response.status_code != 200:
-                last_error = f"HTTP {response.status_code}"
+    for url in urls:
+        last_url = url
+        for attempt in range(1, PDF_DOWNLOAD_RETRIES + 1):
+            try:
+                response = session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
+
+                if response.status_code != 200:
+                    last_error = f"HTTP {response.status_code}"
+                    time.sleep(0.6 * attempt)
+                    continue
+
+                pdf_bytes = trim_to_pdf_start(response.content)
+
+                if not looks_like_pdf_response(response) and not pdf_bytes.startswith(b"%PDF-"):
+                    content_type = response.headers.get("Content-Type", "")
+                    snippet = response.text[:220].replace("\n", " ") if response.text else ""
+                    last_error = f"Response was not a PDF. Content-Type: {content_type}. {snippet}"
+                    time.sleep(0.6 * attempt)
+                    continue
+
+                if not is_valid_pdf_bytes(pdf_bytes):
+                    last_error = "Downloaded response looked like a PDF but pypdf could not read it."
+                    time.sleep(0.6 * attempt)
+                    continue
+
+                return True, pdf_bytes, url, ""
+
+            except requests.RequestException as exc:
+                last_error = str(exc)
                 time.sleep(0.6 * attempt)
-                continue
 
-            if not looks_like_pdf_response(response):
-                snippet = response.text[:160].replace("\n", " ") if response.text else ""
-                last_error = f"Response was not a PDF. Content-Type: {response.headers.get('Content-Type', '')}. {snippet}"
-                time.sleep(0.6 * attempt)
-                continue
-
-            pdf_bytes = trim_to_pdf_start(response.content)
-            if not is_valid_pdf_bytes(pdf_bytes):
-                last_error = "Downloaded response looked like a PDF but pypdf could not read it."
-                time.sleep(0.6 * attempt)
-                continue
-
-            return True, pdf_bytes, url, ""
-
-        except requests.RequestException as exc:
-            last_error = str(exc)
-            time.sleep(0.6 * attempt)
-
-    return False, None, url, last_error
+    return False, None, last_url, last_error
 
 
 def merge_pdf_bytes(pdf_byte_list: List[bytes], cover_pdf_bytes: Optional[bytes] = None) -> bytes:
@@ -661,7 +676,7 @@ with st.expander("Section details", expanded=False):
 all_codes_preview = normalize_codes(manual_codes + excel_codes)
 if all_codes_preview and selected_blocks:
     preview_code = all_codes_preview[0]
-    preview_url = build_phoenix_pdf_url(preview_code, selected_blocks)
+    preview_url = build_phoenix_pdf_url(preview_code, selected_blocks, action="DOWNLOAD")
     st.markdown(f'<div class="url-preview">Preview for <strong>PHX-{preview_code}</strong>. Encoded API code: <strong>{encode_item_number_for_phoenix(preview_code)}</strong>. The app downloads this VIEW URL as PDF bytes, then merges it.</div>', unsafe_allow_html=True)
     st.code(preview_url, language="text")
 
@@ -693,7 +708,7 @@ with st.expander("Advanced connection settings", expanded=False):
     with c3:
         max_workers_setting = st.slider("Parallel downloads", min_value=1, max_value=12, value=6)
 
-st.markdown('<div class="info-note">Conversion example: PHX-3201853 becomes 3201853, then Base64 becomes MzIwMTg1Mw==, then padding is removed, so the API path uses MzIwMTg1Mw. The action parameter is VIEW.</div>', unsafe_allow_html=True)
+st.markdown('<div class="info-note">Conversion example: PHX-3201853 becomes 3201853, then Base64 becomes MzIwMTg1Mw==, then padding is removed, so the API path uses MzIwMTg1Mw. The app downloads with action=DOWNLOAD first, then falls back to action=VIEW if needed.</div>', unsafe_allow_html=True)
 
 run_clicked = st.button("Build PDF Pack", type="primary", use_container_width=True)
 
@@ -773,3 +788,4 @@ if run_clicked:
         st.error(f"Failed to merge PDFs: {exc}")
 
 st.markdown('<div class="footer-note">Built for fast retrieval and packaging of Phoenix Contact product documentation.</div>', unsafe_allow_html=True)
+
