@@ -1299,7 +1299,7 @@ st.markdown(
             <span>PHOENIX</span>
             <span>CONTACT</span>
         </div>
-        <div class="phx-search">Search product documentation</div>
+        
     </div>
 
     <div class="phx-nav">
