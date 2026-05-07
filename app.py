@@ -806,7 +806,7 @@ st.markdown(
             position: relative;
             width: 48px;
             height: 135px;
-            background: linear-gradient(180deg, var(--phx-yellow-2), var(--phx-yellow));
+            background: linear-gradient(180deg, var(--phx-green), var(--phx-teal));
             border: 1px solid #c8a600;
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 15px rgba(0,0,0,0.08);
         }
@@ -1019,9 +1019,9 @@ st.markdown(
 
         .stButton > button:hover,
         div[data-testid="stDownloadButton"] > button:hover {
-            background: var(--phx-yellow) !important;
-            border-color: var(--phx-yellow) !important;
-            color: var(--phx-black) !important;
+            background: var(--phx-teal) !important;
+            border-color: var(--phx-teal) !important;
+            color: #ffffff !important;
         }
 
         div[data-testid="stExpander"] {
@@ -1088,7 +1088,7 @@ st.markdown(
             <div class="hero-pills">
                 <div class="hero-pill">PHX item codes</div>
                 <div class="hero-pill">Excel import</div>
-                <div class="hero-pill">Selectable sections</div>
+                <div class="hero-pill">Technical data + drawings by default</div>
                 <div class="hero-pill">Merged PDF output</div>
             </div>
         </div>
@@ -1347,4 +1347,3 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
