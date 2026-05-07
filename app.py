@@ -1302,13 +1302,6 @@ st.markdown(
         
     </div>
 
-    <div class="phx-nav">
-        <div>Datasheet Builder</div>
-        <div>Technical Data</div>
-        <div>Drawings</div>
-        <div>Classifications</div>
-        <div>Accessories</div>
-    </div>
     """,
     unsafe_allow_html=True,
 )
