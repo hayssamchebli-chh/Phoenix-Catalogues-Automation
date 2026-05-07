@@ -1556,14 +1556,7 @@ engine_label = st.radio(
 
 engine = "selenium_file_download_only" if engine_label.startswith("Selenium") else "fast_browser_fetch_with_fallback"
 
-st.markdown(
-    """
-    <div class="info-note">
-        Code conversion example: <strong>PHX-3201853</strong> becomes <strong>3201853</strong>,
-        then Base64 becomes <strong>MzIwMTg1Mw</strong>.
-        The selected sections are added to <strong>blocks=...</strong> for each product PDF.
-    </div>
-    """,
+,
     unsafe_allow_html=True,
 )
 
