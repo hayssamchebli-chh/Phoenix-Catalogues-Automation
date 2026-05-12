@@ -4,6 +4,7 @@ import re
 import shutil
 import tempfile
 import time
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
@@ -174,6 +175,31 @@ def build_phoenix_pdf_url(
     )
 
     return f"{BASE_PDF_API_URL.format(encoded_code=encoded_code)}?{query}"
+
+
+def resolve_product_page_pdf_urls(code: str) -> List[str]:
+    """Find public Phoenix Contact product-page PDF URLs for an item number.
+
+    The numeric-only URL /products/1032526?type=pdf often returns Page not found.
+    Phoenix product pages usually need the full slug, such as:
+    /products/single-relay-rel-ir-bll-24dc2x21-1032526?type=pdf
+    """
+    code = clean_phoenix_code(code)
+    if not code:
+        return []
+
+    search_queries = [
+        f"site:phoenixcontact.com/en-sg/products {code} Phoenix Contact",
+        f"site:phoenixcontact.com/en-us/products {code} Phoenix Contact",
+        f"site:phoenixcontact.com/en-in/products {code} Phoenix Contact",
+        f"site:phoenixcontact.com/en-ae/products {code} Phoenix Contact",
+        f"site:phoenixcontact.com/en-gb/products {code} Phoenix Contact",
+    ]
+
+    # Streamlit apps cannot use Google directly without an API key.
+    # So this function returns empty unless you later connect a search API.
+    # Keep it as a placeholder for proper slug discovery.
+    return []
 
 
 def ensure_pdf_filename(filename: str) -> str:
@@ -596,12 +622,25 @@ def locale_to_product_paths(locale: str) -> List[str]:
 
     return unique
 
+def normalize_product_pdf_url(url: str) -> str:
+    url = str(url or "").strip()
+    if not url:
+        return ""
+
+    # Remove existing query and force type=pdf.
+    base = url.split("?", 1)[0].strip()
+    if not base:
+        return ""
+
+    return f"{base}?type=pdf"
+    
 
 def build_candidate_pdf_urls(
     code: str,
     selected_blocks: Sequence[str],
     realm: str,
     locale: str,
+    manual_product_url: str = "",
 ) -> List[Tuple[str, List[str], str]]:
     candidates: List[Tuple[str, List[str], str]] = []
     seen = set()
@@ -612,7 +651,7 @@ def build_candidate_pdf_urls(
         if fallback_blocks not in block_sets:
             block_sets.append(fallback_blocks)
 
-    # 1) Existing Phoenix PDF API candidates
+    # 1) API candidates
     for blocks in block_sets:
         for action in FALLBACK_ACTIONS:
             url = build_phoenix_pdf_url(
@@ -630,20 +669,15 @@ def build_candidate_pdf_urls(
             seen.add(key)
             candidates.append((url, blocks, action))
 
-    # 2) Product-page PDF fallbacks.
-    # These do not support block selection, but can work when the API redirects to login.
-    for product_path in locale_to_product_paths(locale):
-        url = f"https://www.phoenixcontact.com/{product_path}/products/{code}?type=pdf"
-
-        key = (url, tuple(["product-page-pdf"]), "PRODUCT_PAGE_PDF")
-        if key in seen:
-            continue
-
-        seen.add(key)
-        candidates.append((url, ["product-page-pdf"], "PRODUCT_PAGE_PDF"))
+    # 2) Manual product-page fallback URL, if provided.
+    product_pdf_url = normalize_product_pdf_url(manual_product_url)
+    if product_pdf_url:
+        key = (product_pdf_url, tuple(["product-page-pdf"]), "PRODUCT_PAGE_PDF")
+        if key not in seen:
+            seen.add(key)
+            candidates.append((product_pdf_url, ["product-page-pdf"], "PRODUCT_PAGE_PDF"))
 
     return candidates
-
 
 def process_code_with_driver(
     driver: webdriver.Chrome,
