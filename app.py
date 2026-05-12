@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlencode
 
 import pandas as pd
@@ -173,7 +173,7 @@ def build_phoenix_pdf_url(
     )
 
     return f"{BASE_PDF_API_URL.format(encoded_code=encoded_code)}?{query}"
-    
+
 
 def build_candidate_pdf_urls(
     code: str,
@@ -199,7 +199,7 @@ def build_candidate_pdf_urls(
         candidates.append((url, profile["name"]))
 
     return candidates
-    
+
 
 def ensure_pdf_filename(filename: str) -> str:
     filename = str(filename or "phoenix_contact_datasheet_pack.pdf").strip()
@@ -423,9 +423,17 @@ def wait_for_pdf_download(
     driver: webdriver.Chrome,
     download_dir: Path,
     timeout_seconds: int,
+    expected_url: str,
 ) -> Tuple[Optional[Path], str]:
+    """Wait for a PDF download and avoid stale Page Not Found detection.
+
+    The key fix is expected_url: we only treat "Page not found" as real
+    when Chrome is actually on the URL requested for this item/path.
+    """
     start = time.time()
     last_seen = ""
+
+    expected_base = expected_url.split("?", 1)[0].lower()
 
     while time.time() - start < timeout_seconds:
         try:
@@ -438,6 +446,11 @@ def wait_for_pdf_download(
         current_url_lower = current_url.lower()
         title_lower = title.lower()
 
+        is_on_expected_request = (
+            expected_base in current_url_lower
+            or current_url_lower.startswith("chrome://downloads")
+        )
+
         if any(marker in current_url_lower for marker in LOGIN_URL_MARKERS):
             return (
                 None,
@@ -445,7 +458,10 @@ def wait_for_pdf_download(
                 "This PDF appears to require a logged-in Phoenix Contact session.",
             )
 
-        if any(marker in title_lower for marker in NOT_FOUND_TITLE_MARKERS):
+        # Only accept Page Not Found when it belongs to this requested URL.
+        # This prevents a stale not-found title from the previous item
+        # from failing the next valid item.
+        if is_on_expected_request and any(marker in title_lower for marker in NOT_FOUND_TITLE_MARKERS):
             return (
                 None,
                 "Phoenix Contact returned a page-not-found response for this generated PDF URL.",
@@ -459,8 +475,14 @@ def wait_for_pdf_download(
 
         if pdf_files and not partial_files:
             newest = max(pdf_files, key=lambda p: p.stat().st_mtime)
-            time.sleep(0.1)
-            return newest, ""
+
+            # Stability check: make sure Chrome has finished writing.
+            size_1 = newest.stat().st_size
+            time.sleep(0.25)
+            size_2 = newest.stat().st_size
+
+            if size_1 == size_2 and size_2 > 0:
+                return newest, ""
 
         time.sleep(0.2)
 
@@ -473,14 +495,28 @@ def download_pdf_bytes_with_selenium(
     url: str,
     timeout_seconds: int,
 ) -> Tuple[bool, Optional[bytes], str]:
+    """Download one PDF using Chrome.
+
+    This resets Chrome to about:blank before every candidate URL so a failed
+    item cannot poison the next request.
+    """
     clear_download_dir(download_dir)
 
     try:
+        driver.get("about:blank")
+        time.sleep(0.25)
+        clear_download_dir(download_dir)
+
         driver.get(url)
     except Exception as exc:
         return False, None, f"Chrome could not open URL: {exc}"
 
-    pdf_path, wait_error = wait_for_pdf_download(driver, download_dir, timeout_seconds)
+    pdf_path, wait_error = wait_for_pdf_download(
+        driver=driver,
+        download_dir=download_dir,
+        timeout_seconds=timeout_seconds,
+        expected_url=url,
+    )
 
     if pdf_path is None:
         current_url = ""
@@ -542,7 +578,6 @@ def process_code_with_driver(
         errors.append(f"[{profile_name}] {error}")
 
     first_url = candidate_urls[0][0] if candidate_urls else ""
-
     error_text = " | ".join(errors)
 
     if "sign-in page" in error_text.lower() or "login.phoenixcontact.com" in error_text.lower():
@@ -580,6 +615,12 @@ def download_chunk_with_one_browser(
     headless: bool,
     timeout_seconds: int,
 ) -> List[Dict[str, object]]:
+    """Download a chunk with one Chrome browser.
+
+    Important fix:
+    If one item fails, Chrome is restarted before the next item. This prevents
+    a stale Page Not Found or login page from causing every later item to fail.
+    """
     results: List[Dict[str, object]] = []
 
     with tempfile.TemporaryDirectory(prefix="phoenix_contact_downloads_") as tmp:
@@ -612,8 +653,21 @@ def download_chunk_with_one_browser(
                     }
 
                 results.append(result)
+
+                # Reset the browser after a failed item so the next item starts clean.
+                if not result.get("ok"):
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+
+                    driver = create_selenium_driver(download_dir, headless=headless)
+
         finally:
-            driver.quit()
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
     return results
 
@@ -1061,9 +1115,19 @@ st.markdown(
         div[data-testid="stCheckbox"] label,
         div[data-testid="stSelectbox"] label,
         div[data-testid="stFileUploader"] label,
-        div[data-testid="stSlider"] label {
+        div[data-testid="stSlider"] label,
+        div[data-testid="stMultiselect"] label {
             color: var(--phx-black) !important;
             font-weight: 800 !important;
+        }
+
+        div[data-baseweb="tag"] {
+            background-color: var(--phx-teal) !important;
+            color: #ffffff !important;
+        }
+
+        div[data-baseweb="tag"] span {
+            color: #ffffff !important;
         }
 
         .stButton > button,
@@ -1140,13 +1204,13 @@ st.markdown(
             <div class="hero-title">Datasheet pack builder</div>
             <div class="hero-copy">
                 Build one consolidated PDF from Phoenix Contact item codes.
-                The app tries only the UAE and PC datasheet API paths using technical data and drawings.
+                The app tries the AE and PC datasheet API paths without an action parameter.
             </div>
             <div class="hero-pills">
                 <div class="hero-pill">PHX item codes</div>
                 <div class="hero-pill">AE / en-AE path</div>
                 <div class="hero-pill">PC / en-PC path</div>
-                <div class="hero-pill">Technical data + drawings</div>
+                <div class="hero-pill">Technical data + drawings by default</div>
                 <div class="hero-pill">Merged PDF output</div>
             </div>
         </div>
@@ -1163,7 +1227,7 @@ with step_cols[0]:
     render_step("01", "Add codes", "Paste PHX codes manually or import an Excel column.")
 
 with step_cols[1]:
-    render_step("02", "Download PDFs", "The app tries AE first, then PC, without an action parameter.")
+    render_step("02", "Choose sections", "Technical data and drawings are selected by default.")
 
 with step_cols[2]:
     render_step("03", "Build pack", "Downloaded datasheets are validated, merged, and exported.")
@@ -1273,7 +1337,7 @@ selected_blocks = [
 with st.expander("Section details", expanded=False):
     for key, label, description in PDF_BLOCK_OPTIONS:
         st.markdown(f"**{label}** (`{key}`): {description}")
-        
+
 
 # -----------------------------------------------------------------------------
 # Settings
@@ -1281,7 +1345,7 @@ with st.expander("Section details", expanded=False):
 phx_section(
     "Pack settings",
     "Cover and output",
-    "The datasheet URL is fixed to technical-data and drawings. No action parameter is used.",
+    "The app uses only the AE and PC PDF API paths, without an action parameter.",
 )
 
 settings_col1, settings_col2 = st.columns(2)
@@ -1337,6 +1401,10 @@ if run_clicked:
         st.error("Please enter item codes manually or upload an Excel file.")
         st.stop()
 
+    if not selected_blocks:
+        st.error("Please select at least one PDF section.")
+        st.stop()
+
     cover_pdf_bytes, cover_error, cover_warning = get_cover_pdf_bytes(uploaded_cover, include_cover)
 
     if cover_error:
@@ -1354,7 +1422,7 @@ if run_clicked:
             timeout_seconds=timeout_seconds,
             browser_workers=browser_workers,
         )
-        
+
     except Exception as exc:
         st.error(f"Chrome/Selenium failed before downloads could complete: {exc}")
         st.info(
