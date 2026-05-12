@@ -640,18 +640,23 @@ def build_candidate_pdf_urls(
     selected_blocks: Sequence[str],
     realm: str,
     locale: str,
-    manual_product_url: str = "",
 ) -> List[Tuple[str, List[str], str]]:
     candidates: List[Tuple[str, List[str], str]] = []
     seen = set()
 
+    def add_candidate(url: str, blocks: List[str], action: str) -> None:
+        key = (url, tuple(blocks), action)
+        if key not in seen:
+            seen.add(key)
+            candidates.append((url, blocks, action))
+
+    # 1) Main URL using the user's current realm/locale/settings
     block_sets: List[List[str]] = [list(selected_blocks)]
 
     for fallback_blocks in FALLBACK_BLOCK_SETS:
         if fallback_blocks not in block_sets:
             block_sets.append(fallback_blocks)
 
-    # 1) API candidates
     for blocks in block_sets:
         for action in FALLBACK_ACTIONS:
             url = build_phoenix_pdf_url(
@@ -661,24 +666,34 @@ def build_candidate_pdf_urls(
                 locale=locale,
                 action=action,
             )
+            add_candidate(url, blocks, action)
 
-            key = (url, tuple(blocks), action)
-            if key in seen:
-                continue
+    # 2) UAE fallback URL for failed items
+    # Example:
+    # https://www.phoenixcontact.com/product/pdf/api/v1/{converted_code}
+    # ?_realm=ae&_locale=en-AE&blocks=technical-data%2Cdrawings&action=VIEW
+    ae_blocks = ["technical-data", "drawings"]
+    ae_url = build_phoenix_pdf_url(
+        code,
+        ae_blocks,
+        realm="ae",
+        locale="en-AE",
+        action="VIEW",
+    )
+    add_candidate(ae_url, ae_blocks, "VIEW_AE_FALLBACK")
 
-            seen.add(key)
-            candidates.append((url, blocks, action))
-
-    # 2) Manual product-page fallback URL, if provided.
-    product_pdf_url = normalize_product_pdf_url(manual_product_url)
-    if product_pdf_url:
-        key = (product_pdf_url, tuple(["product-page-pdf"]), "PRODUCT_PAGE_PDF")
-        if key not in seen:
-            seen.add(key)
-            candidates.append((product_pdf_url, ["product-page-pdf"], "PRODUCT_PAGE_PDF"))
+    # 3) Optional UAE DOWNLOAD fallback too
+    # Keep this because sometimes DOWNLOAD behaves differently from VIEW.
+    ae_download_url = build_phoenix_pdf_url(
+        code,
+        ae_blocks,
+        realm="ae",
+        locale="en-AE",
+        action="DOWNLOAD",
+    )
+    add_candidate(ae_download_url, ae_blocks, "DOWNLOAD_AE_FALLBACK")
 
     return candidates
-
 def process_code_with_driver(
     driver: webdriver.Chrome,
     download_dir: Path,
