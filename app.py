@@ -1354,7 +1354,7 @@ if run_clicked:
             timeout_seconds=timeout_seconds,
             browser_workers=browser_workers,
         )
-        )
+        
     except Exception as exc:
         st.error(f"Chrome/Selenium failed before downloads could complete: {exc}")
         st.info(
