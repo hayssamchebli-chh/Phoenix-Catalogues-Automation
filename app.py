@@ -45,6 +45,31 @@ DEFAULT_SELECTED_BLOCK_LABELS = [
     "Drawings",
 ]
 
+FALLBACK_BLOCK_SETS = [
+    ["technical-data", "drawings"],
+    [
+        "commercial-data",
+        "technical-data",
+        "drawings",
+        "classifications",
+        "environmental-compliance-data",
+        "all-accessories",
+    ],
+]
+
+FALLBACK_ACTIONS = ["VIEW", "DOWNLOAD"]
+
+LOGIN_URL_MARKERS = [
+    "login.phoenixcontact.com",
+    "/oauth2/",
+    "_oidc_auth",
+]
+
+NOT_FOUND_TITLE_MARKERS = [
+    "page not found",
+    "not found",
+]
+
 APP_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 DEFAULT_COVER_PATHS = [
     APP_DIR / "cover.pdf",
@@ -56,8 +81,20 @@ DEFAULT_COVER_PATHS = [
 # Code helpers
 # -----------------------------------------------------------------------------
 def clean_phoenix_code(value: str) -> str:
-    value = str(value or "").strip()
-    if not value:
+    """Return the Phoenix Contact numeric item number safely.
+
+    Handles:
+    - PHX-3010110 -> 3010110
+    - 3010110 -> 3010110
+    - 3010110.0 -> 3010110
+    - 3,010,110 -> 3010110
+    """
+    if value is None:
+        return ""
+
+    value = str(value).strip()
+
+    if not value or value.lower() in {"nan", "none", "null"}:
         return ""
 
     value = value.replace("\u2013", "-").replace("\u2014", "-")
@@ -65,6 +102,16 @@ def clean_phoenix_code(value: str) -> str:
 
     if "-" in value:
         value = value.rsplit("-", 1)[1].strip()
+
+    value = value.replace(",", "").replace(" ", "")
+
+    # Excel often turns item numbers into 3010110.0.
+    # This must become 3010110, not 30101100.
+    if re.fullmatch(r"\d+\.0+", value):
+        value = value.split(".", 1)[0]
+
+    if re.fullmatch(r"\d+\.\d+", value):
+        value = value.split(".", 1)[0]
 
     return re.sub(r"[^0-9]", "", value)
 
@@ -137,6 +184,10 @@ def ensure_pdf_filename(filename: str) -> str:
         filename += ".pdf"
 
     return filename
+
+
+def read_excel_file(uploaded_file) -> pd.DataFrame:
+    return pd.read_excel(uploaded_file, dtype=str)
 
 
 def pick_default_excel_column(columns: List[str]) -> int:
@@ -343,11 +394,38 @@ def clear_download_dir(download_dir: Path) -> None:
                 pass
 
 
-def wait_for_pdf_download(download_dir: Path, timeout_seconds: int) -> Tuple[Optional[Path], str]:
+def wait_for_pdf_download(
+    driver: webdriver.Chrome,
+    download_dir: Path,
+    timeout_seconds: int,
+) -> Tuple[Optional[Path], str]:
     start = time.time()
     last_seen = ""
 
     while time.time() - start < timeout_seconds:
+        try:
+            current_url = driver.current_url or ""
+            title = driver.title or ""
+        except Exception:
+            current_url = ""
+            title = ""
+
+        current_url_lower = current_url.lower()
+        title_lower = title.lower()
+
+        if any(marker in current_url_lower for marker in LOGIN_URL_MARKERS):
+            return (
+                None,
+                "Phoenix Contact redirected this item to the sign-in page. "
+                "This PDF appears to require a logged-in Phoenix Contact session.",
+            )
+
+        if any(marker in title_lower for marker in NOT_FOUND_TITLE_MARKERS):
+            return (
+                None,
+                "Phoenix Contact returned a page-not-found response for this generated PDF URL.",
+            )
+
         pdf_files = list(download_dir.glob("*.pdf"))
         partial_files = list(download_dir.glob("*.crdownload"))
         all_files = list(download_dir.iterdir())
@@ -377,7 +455,7 @@ def selenium_file_download_pdf_bytes(
     except Exception as exc:
         return False, None, f"Chrome could not open URL: {exc}"
 
-    pdf_path, wait_error = wait_for_pdf_download(download_dir, timeout_seconds)
+    pdf_path, wait_error = wait_for_pdf_download(driver, download_dir, timeout_seconds)
 
     if pdf_path is None:
         current_url = ""
@@ -482,6 +560,41 @@ def prepare_browser_for_fetch(driver: webdriver.Chrome) -> None:
         pass
 
 
+def build_candidate_pdf_urls(
+    code: str,
+    selected_blocks: Sequence[str],
+    realm: str,
+    locale: str,
+) -> List[Tuple[str, List[str], str]]:
+    candidates: List[Tuple[str, List[str], str]] = []
+    seen = set()
+
+    block_sets: List[List[str]] = [list(selected_blocks)]
+
+    for fallback_blocks in FALLBACK_BLOCK_SETS:
+        if fallback_blocks not in block_sets:
+            block_sets.append(fallback_blocks)
+
+    for blocks in block_sets:
+        for action in FALLBACK_ACTIONS:
+            url = build_phoenix_pdf_url(
+                code,
+                blocks,
+                realm=realm,
+                locale=locale,
+                action=action,
+            )
+
+            key = (url, tuple(blocks), action)
+            if key in seen:
+                continue
+
+            seen.add(key)
+            candidates.append((url, blocks, action))
+
+    return candidates
+
+
 def process_code_with_driver(
     driver: webdriver.Chrome,
     download_dir: Path,
@@ -494,48 +607,90 @@ def process_code_with_driver(
     engine: str,
 ) -> Dict[str, object]:
     encoded = encode_item_number_for_phoenix(code)
-    url = build_phoenix_pdf_url(
-        code,
-        selected_blocks,
+
+    candidate_urls = build_candidate_pdf_urls(
+        code=code,
+        selected_blocks=selected_blocks,
         realm=realm,
         locale=locale,
-        action="VIEW",
     )
 
-    used_method = "browser_fetch"
+    errors: List[str] = []
 
-    if engine == "selenium_file_download_only":
-        ok, data, error = selenium_file_download_pdf_bytes(driver, download_dir, url, timeout_seconds)
-        used_method = "selenium_file_download"
-    else:
-        ok, data, error = browser_fetch_pdf_bytes(driver, url, timeout_seconds)
+    for url, blocks_used, action_used in candidate_urls:
+        used_method = "browser_fetch"
 
-        if not ok:
-            fallback_ok, fallback_data, fallback_error = selenium_file_download_pdf_bytes(
+        if engine == "selenium_file_download_only":
+            ok, data, error = selenium_file_download_pdf_bytes(
                 driver,
                 download_dir,
                 url,
                 timeout_seconds,
             )
+            used_method = f"selenium_file_download_{action_used.lower()}"
 
-            if fallback_ok:
-                ok = True
-                data = fallback_data
-                error = ""
-                used_method = "selenium_file_download_fallback"
+        else:
+            ok, data, error = browser_fetch_pdf_bytes(
+                driver,
+                url,
+                timeout_seconds,
+            )
+
+            if ok:
+                used_method = f"browser_fetch_{action_used.lower()}"
             else:
-                error = f"Fast browser fetch failed: {error}; Selenium fallback failed: {fallback_error}"
-                used_method = "failed"
+                fallback_ok, fallback_data, fallback_error = selenium_file_download_pdf_bytes(
+                    driver,
+                    download_dir,
+                    url,
+                    timeout_seconds,
+                )
+
+                if fallback_ok:
+                    ok = True
+                    data = fallback_data
+                    error = ""
+                    used_method = f"selenium_file_download_fallback_{action_used.lower()}"
+                else:
+                    ok = False
+                    data = None
+                    error = (
+                        f"Browser fetch failed: {error}; "
+                        f"Selenium download failed: {fallback_error}"
+                    )
+                    used_method = "failed"
+
+        if ok and data:
+            return {
+                "index": index,
+                "code": code,
+                "encoded": encoded,
+                "ok": True,
+                "pdf_bytes": data,
+                "used_url": url,
+                "method": used_method,
+                "blocks_used": ",".join(blocks_used),
+                "action_used": action_used,
+                "error": "",
+            }
+
+        errors.append(
+            f"[action={action_used}; blocks={','.join(blocks_used)}] {error}"
+        )
+
+    first_url = candidate_urls[0][0] if candidate_urls else ""
 
     return {
         "index": index,
         "code": code,
         "encoded": encoded,
-        "ok": ok,
-        "pdf_bytes": data,
-        "used_url": url,
-        "method": used_method,
-        "error": error,
+        "ok": False,
+        "pdf_bytes": None,
+        "used_url": first_url,
+        "method": "failed",
+        "blocks_used": "",
+        "action_used": "",
+        "error": " | ".join(errors),
     }
 
 
@@ -581,20 +736,24 @@ def download_chunk_with_one_browser(
                         engine,
                     )
                 except Exception as exc:
+                    fallback_url = build_phoenix_pdf_url(
+                        code,
+                        selected_blocks,
+                        realm=realm,
+                        locale=locale,
+                        action="VIEW",
+                    )
+
                     result = {
                         "index": index,
                         "code": code,
                         "encoded": encode_item_number_for_phoenix(code),
                         "ok": False,
                         "pdf_bytes": None,
-                        "used_url": build_phoenix_pdf_url(
-                            code,
-                            selected_blocks,
-                            realm=realm,
-                            locale=locale,
-                            action="VIEW",
-                        ),
+                        "used_url": fallback_url,
                         "method": "exception",
+                        "blocks_used": ",".join(selected_blocks),
+                        "action_used": "VIEW",
                         "error": str(exc),
                     }
 
@@ -680,6 +839,8 @@ def download_pdfs(
                     "Item number": result["code"],
                     "Encoded API code": result["encoded"],
                     "Method": result.get("method", ""),
+                    "Action used": result.get("action_used", ""),
+                    "Blocks used": result.get("blocks_used", ""),
                     "Status": "Downloaded",
                     "Source URL": result["used_url"],
                 }
@@ -691,6 +852,8 @@ def download_pdfs(
                     "Item number": result["code"],
                     "Encoded API code": result.get("encoded", ""),
                     "Method": result.get("method", ""),
+                    "Action used": result.get("action_used", ""),
+                    "Blocks used": result.get("blocks_used", ""),
                     "Status": "Failed",
                     "Error": result.get("error", "Unknown error"),
                     "Source URL": result.get("used_url", ""),
@@ -811,12 +974,6 @@ st.markdown(
             letter-spacing: 0.06em;
         }
 
-        .topbar-links {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-        }
-
         .phx-brandbar {
             display: flex;
             align-items: center;
@@ -853,56 +1010,11 @@ st.markdown(
             color: var(--phx-black);
         }
 
-        .phx-search {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.8rem;
-            min-width: 260px;
-            padding: 0.7rem 0.85rem;
-            background: var(--phx-soft);
-            border: 1px solid var(--phx-line);
-            color: var(--phx-muted);
-            font-size: 0.88rem;
-        }
-
-        .phx-search::after {
-            content: "";
-            width: 11px;
-            height: 11px;
-            border-radius: 50%;
-            background: var(--phx-teal);
-            box-shadow: 0 0 0 5px rgba(0, 155, 163, 0.18);
-        }
-
-        .phx-nav {
-            display: flex;
-            flex-wrap: wrap;
-            background: #ffffff;
-            border: 1px solid var(--phx-line);
-            border-top: 0;
-            margin-bottom: 1rem;
-        }
-
-        .phx-nav div {
-            padding: 0.82rem 1rem;
-            border-right: 1px solid var(--phx-line);
-            font-size: 0.78rem;
-            font-weight: 900;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-        }
-
-        .phx-nav div:first-child {
-            background: var(--phx-green);
-            color: var(--phx-black);
-        }
-
         .hero-card {
             position: relative;
             overflow: hidden;
             display: grid;
-            grid-template-columns: 1.35fr 0.65fr;
+            grid-template-columns: 1fr;
             gap: 1.5rem;
             align-items: center;
             background: linear-gradient(135deg, #ffffff 0%, #f7faf8 58%, #edf4f2 100%);
@@ -970,64 +1082,6 @@ st.markdown(
             padding: 0.55rem 0.7rem;
             font-size: 0.82rem;
             font-weight: 800;
-        }
-
-        .hero-visual {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 220px;
-        }
-
-        .terminal-rail {
-            display: flex;
-            gap: 0.45rem;
-            align-items: center;
-            justify-content: center;
-            width: min(100%, 360px);
-            min-height: 205px;
-            background: linear-gradient(145deg, #ffffff 0%, #eef3f2 100%);
-            border: 1px solid #d0d0cb;
-            box-shadow: 0 20px 38px rgba(0, 0, 0, 0.12);
-            transform: rotate(-2deg);
-        }
-
-        .terminal {
-            position: relative;
-            width: 48px;
-            height: 135px;
-            background: linear-gradient(180deg, var(--phx-green) 0%, var(--phx-teal) 100%);
-            border: 1px solid var(--phx-black);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 15px rgba(0,0,0,0.08);
-        }
-
-        .terminal:nth-child(even) {
-            transform: translateY(-7px);
-        }
-
-        .terminal:nth-child(3) {
-            transform: translateY(8px);
-        }
-
-        .terminal::before,
-        .terminal::after {
-            content: "";
-            position: absolute;
-            left: 10px;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            background: #ffffff;
-            border: 3px solid #222222;
-            box-sizing: border-box;
-        }
-
-        .terminal::before {
-            top: 20px;
-        }
-
-        .terminal::after {
-            bottom: 20px;
         }
 
         .step-grid,
@@ -1130,17 +1184,6 @@ st.markdown(
             color: var(--phx-muted);
             font-size: 0.88rem;
             line-height: 1.5;
-        }
-
-        .url-preview {
-            background: #ffffff;
-            border: 1px solid var(--phx-line);
-            border-left: 5px solid var(--phx-teal);
-            padding: 0.85rem 1rem;
-            color: var(--phx-muted);
-            font-size: 0.9rem;
-            line-height: 1.5;
-            margin-top: 0.8rem;
         }
 
         .info-note {
@@ -1261,14 +1304,6 @@ st.markdown(
                 display: block;
             }
 
-            .phx-search {
-                display: none;
-            }
-
-            .hero-visual {
-                margin-top: 1rem;
-            }
-
             .step-grid,
             .metric-grid {
                 grid-template-columns: 1fr;
@@ -1299,9 +1334,7 @@ st.markdown(
             <span>PHOENIX</span>
             <span>CONTACT</span>
         </div>
-        
     </div>
-
     """,
     unsafe_allow_html=True,
 )
@@ -1322,7 +1355,6 @@ st.markdown(
                 <div class="hero-pill">Merged PDF output</div>
             </div>
         </div>
-
     </div>
     """,
     unsafe_allow_html=True,
@@ -1398,7 +1430,7 @@ with input_col2:
 
     if uploaded_excel is not None:
         try:
-            excel_df = pd.read_excel(uploaded_excel)
+            excel_df = read_excel_file(uploaded_excel)
 
             if excel_df.empty:
                 st.warning("The uploaded Excel file is empty.")
@@ -1442,15 +1474,6 @@ selected_blocks = [
     for label in all_block_labels
     if label in selected_block_labels
 ]
-
-
-
-all_codes_preview = normalize_codes(manual_codes + excel_codes)
-
-if all_codes_preview and selected_blocks:
-    preview_code = all_codes_preview[0]
-    preview_url = build_phoenix_pdf_url(preview_code, selected_blocks, action="VIEW")
-
 
 
 # -----------------------------------------------------------------------------
@@ -1519,9 +1542,6 @@ engine_label = st.radio(
 )
 
 engine = "selenium_file_download_only" if engine_label.startswith("Selenium") else "fast_browser_fetch_with_fallback"
-
-unsafe_allow_html=True,
-
 
 run_clicked = st.button("Build PDF Pack", type="primary", use_container_width=True)
 
