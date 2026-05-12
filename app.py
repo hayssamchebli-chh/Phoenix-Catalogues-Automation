@@ -560,6 +560,43 @@ def prepare_browser_for_fetch(driver: webdriver.Chrome) -> None:
         pass
 
 
+def locale_to_product_paths(locale: str) -> List[str]:
+    """Return likely Phoenix Contact product-page locale paths.
+
+    en-PC is the PDF API locale, but product pages use paths like:
+    /en-us/products/...
+    /en-sg/products/...
+    /sg/products/...
+    """
+    locale = str(locale or "").strip().lower()
+
+    paths = []
+
+    if locale and "-" in locale and locale != "en-pc":
+        lang, country = locale.split("-", 1)
+        paths.append(f"{lang}-{country}")
+
+    # Useful public fallbacks seen on Phoenix Contact pages.
+    paths.extend([
+        "en-us",
+        "en-sg",
+        "en-ae",
+        "en-in",
+        "en-gb",
+        "sg",
+        "us",
+    ])
+
+    unique = []
+    seen = set()
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+
+    return unique
+
+
 def build_candidate_pdf_urls(
     code: str,
     selected_blocks: Sequence[str],
@@ -575,6 +612,7 @@ def build_candidate_pdf_urls(
         if fallback_blocks not in block_sets:
             block_sets.append(fallback_blocks)
 
+    # 1) Existing Phoenix PDF API candidates
     for blocks in block_sets:
         for action in FALLBACK_ACTIONS:
             url = build_phoenix_pdf_url(
@@ -591,6 +629,18 @@ def build_candidate_pdf_urls(
 
             seen.add(key)
             candidates.append((url, blocks, action))
+
+    # 2) Product-page PDF fallbacks.
+    # These do not support block selection, but can work when the API redirects to login.
+    for product_path in locale_to_product_paths(locale):
+        url = f"https://www.phoenixcontact.com/{product_path}/products/{code}?type=pdf"
+
+        key = (url, tuple(["product-page-pdf"]), "PRODUCT_PAGE_PDF")
+        if key in seen:
+            continue
+
+        seen.add(key)
+        candidates.append((url, ["product-page-pdf"], "PRODUCT_PAGE_PDF"))
 
     return candidates
 
