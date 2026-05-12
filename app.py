@@ -25,7 +25,7 @@ BASE_PDF_API_URL = "https://www.phoenixcontact.com/product/pdf/api/v1/{encoded_c
 PHOENIX_HOME_URL = "https://www.phoenixcontact.com/"
 DEFAULT_REALM = "pc"
 DEFAULT_LOCALE = "en-PC"
-DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_TIMEOUT_SECONDS = 60
 
 PDF_BLOCK_OPTIONS: List[Tuple[str, str, str]] = [
     ("commercial-data", "Commercial data", "Basic commercial and ordering information."),
