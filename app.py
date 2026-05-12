@@ -846,6 +846,15 @@ def download_pdfs(
                 }
             )
         else:
+            error_text = str(result.get("error", "Unknown error"))
+            
+            if "sign-in page" in error_text.lower() or "login.phoenixcontact.com" in error_text.lower():
+                status = "Auth required"
+            elif "page-not-found" in error_text.lower() or "page not found" in error_text.lower():
+                status = "Not found"
+            else:
+                status = "Failed"
+            
             failed_rows.append(
                 {
                     "Input code": f"PHX-{result['code']}",
@@ -854,7 +863,7 @@ def download_pdfs(
                     "Method": result.get("method", ""),
                     "Action used": result.get("action_used", ""),
                     "Blocks used": result.get("blocks_used", ""),
-                    "Status": "Failed",
+                    "Status": status,
                     "Error": result.get("error", "Unknown error"),
                     "Source URL": result.get("used_url", ""),
                 }
@@ -1589,12 +1598,33 @@ if run_clicked:
         st.stop()
 
     render_metric_cards(len(codes), len(downloaded_pdfs), len(failed_rows))
-
-    if failed_rows and not keep_going:
-        st.error("At least one code failed and 'Skip failed codes and continue' is disabled.")
-        with st.expander("Failed codes", expanded=True):
+    
+    if failed_rows:
+        with st.expander("Items not downloaded", expanded=True):
             st.dataframe(failed_rows, use_container_width=True)
-        st.stop()
+    
+        auth_required_count = sum(
+            1 for row in failed_rows
+            if row.get("Status") == "Auth required"
+        )
+    
+        not_found_count = sum(
+            1 for row in failed_rows
+            if row.get("Status") == "Not found"
+        )
+    
+        if auth_required_count:
+            st.warning(
+                f"{auth_required_count} item(s) redirected to Phoenix Contact sign-in. "
+                "These PDFs appear to require an authenticated Phoenix Contact session. "
+                "The code and URL conversion are correct, but the PDF is not public for an anonymous browser session."
+            )
+    
+        if not_found_count:
+            st.warning(
+                f"{not_found_count} item(s) returned Page not found from the Phoenix Contact PDF API. "
+                "These may not have a public PDF for the selected locale, or the API may not support those item numbers."
+            )
 
     if not downloaded_pdfs:
         st.error("No PDFs were downloaded, so no merged file could be created.")
