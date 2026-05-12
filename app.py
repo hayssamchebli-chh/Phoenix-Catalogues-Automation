@@ -25,7 +25,23 @@ BASE_PDF_API_URL = "https://www.phoenixcontact.com/product/pdf/api/v1/{encoded_c
 
 DEFAULT_TIMEOUT_SECONDS = 60
 
-FIXED_BLOCKS = ["technical-data", "drawings"]
+PDF_BLOCK_OPTIONS: List[Tuple[str, str, str]] = [
+    ("commercial-data", "Commercial data", "Basic commercial and ordering information."),
+    ("technical-data", "Technical data", "Electrical, mechanical, and product specifications."),
+    ("drawings", "Drawings", "Dimensional drawings and product graphics."),
+    ("classifications", "Classifications", "ETIM, eCl@ss, UNSPSC, and other classifications."),
+    (
+        "environmental-compliance-data",
+        "Environmental compliance data",
+        "RoHS, REACH, China RoHS, and related compliance information.",
+    ),
+    ("all-accessories", "Accessories", "Compatible accessories listed in the PDF."),
+]
+
+DEFAULT_SELECTED_BLOCK_LABELS = [
+    "Technical data",
+    "Drawings",
+]
 
 PDF_URL_PROFILES = [
     {
@@ -135,37 +151,41 @@ def build_phoenix_pdf_url(
     item_number: str,
     realm: str,
     locale: str,
+    selected_blocks: Sequence[str],
 ) -> str:
     """Build Phoenix Contact PDF API URL without action parameter.
 
-    Required format:
+    Example:
     https://www.phoenixcontact.com/product/pdf/api/v1/{converted_code}
     ?_realm=ae&_locale=en-AE&blocks=technical-data%2Cdrawings
-
-    or:
-
-    https://www.phoenixcontact.com/product/pdf/api/v1/{converted_code}
-    ?_realm=pc&_locale=en-PC&blocks=technical-data%2Cdrawings
     """
+    if not selected_blocks:
+        raise ValueError("At least one PDF content block must be selected.")
+
     encoded_code = encode_item_number_for_phoenix(item_number)
 
     query = urlencode(
         [
             ("_realm", realm),
             ("_locale", locale),
-            ("blocks", ",".join(FIXED_BLOCKS)),
+            ("blocks", ",".join(selected_blocks)),
         ]
     )
 
     return f"{BASE_PDF_API_URL.format(encoded_code=encoded_code)}?{query}"
+    
 
-
-def build_candidate_pdf_urls(code: str) -> List[Tuple[str, str]]:
+def build_candidate_pdf_urls(
+    code: str,
+    selected_blocks: Sequence[str],
+) -> List[Tuple[str, str]]:
     """Return only the two allowed Phoenix Contact PDF URLs.
 
     Order:
     1. AE / en-AE
     2. PC / en-PC
+
+    The blocks are chosen by the user, with Technical data and Drawings selected by default.
     """
     candidates: List[Tuple[str, str]] = []
 
@@ -174,11 +194,12 @@ def build_candidate_pdf_urls(code: str) -> List[Tuple[str, str]]:
             code,
             realm=profile["realm"],
             locale=profile["locale"],
+            selected_blocks=selected_blocks,
         )
         candidates.append((url, profile["name"]))
 
     return candidates
-
+    
 
 def ensure_pdf_filename(filename: str) -> str:
     filename = str(filename or "phoenix_contact_datasheet_pack.pdf").strip()
@@ -489,10 +510,11 @@ def process_code_with_driver(
     download_dir: Path,
     index: int,
     code: str,
+    selected_blocks: Sequence[str],
     timeout_seconds: int,
 ) -> Dict[str, object]:
     encoded = encode_item_number_for_phoenix(code)
-    candidate_urls = build_candidate_pdf_urls(code)
+    candidate_urls = build_candidate_pdf_urls(code, selected_blocks)
 
     errors: List[str] = []
 
@@ -554,6 +576,7 @@ def split_work_round_robin(codes: List[str], workers: int) -> List[List[Tuple[in
 
 def download_chunk_with_one_browser(
     chunk: List[Tuple[int, str]],
+    selected_blocks: Sequence[str],
     headless: bool,
     timeout_seconds: int,
 ) -> List[Dict[str, object]]:
@@ -571,10 +594,11 @@ def download_chunk_with_one_browser(
                         download_dir=download_dir,
                         index=index,
                         code=code,
+                        selected_blocks=selected_blocks,
                         timeout_seconds=timeout_seconds,
                     )
                 except Exception as exc:
-                    fallback_url = build_candidate_pdf_urls(code)[0][0]
+                    fallback_url = build_candidate_pdf_urls(code, selected_blocks)[0][0]
                     result = {
                         "index": index,
                         "code": code,
@@ -596,6 +620,7 @@ def download_chunk_with_one_browser(
 
 def download_pdfs(
     codes: List[str],
+    selected_blocks: Sequence[str],
     headless: bool,
     timeout_seconds: int,
     browser_workers: int,
@@ -616,6 +641,7 @@ def download_pdfs(
         status_text.info("Opening Chrome and downloading PDFs...")
         results = download_chunk_with_one_browser(
             chunk=chunks[0],
+            selected_blocks=selected_blocks,
             headless=headless,
             timeout_seconds=timeout_seconds,
         )
@@ -628,6 +654,7 @@ def download_pdfs(
                 executor.submit(
                     download_chunk_with_one_browser,
                     chunk,
+                    selected_blocks,
                     headless,
                     timeout_seconds,
                 ): len(chunk)
@@ -1219,6 +1246,36 @@ with input_col2:
 
 
 # -----------------------------------------------------------------------------
+# PDF content
+# -----------------------------------------------------------------------------
+phx_section(
+    "PDF content",
+    "Choose what to include",
+    "By default, Technical data and Drawings are selected. You can add other available Phoenix Contact PDF sections.",
+)
+
+block_label_to_key = {label: key for key, label, _ in PDF_BLOCK_OPTIONS}
+all_block_labels = [label for _, label, _ in PDF_BLOCK_OPTIONS]
+
+selected_block_labels = st.multiselect(
+    "PDF sections",
+    options=all_block_labels,
+    default=DEFAULT_SELECTED_BLOCK_LABELS,
+    help="These selected sections are added to the blocks=... part of both AE and PC PDF URLs.",
+)
+
+selected_blocks = [
+    block_label_to_key[label]
+    for label in all_block_labels
+    if label in selected_block_labels
+]
+
+with st.expander("Section details", expanded=False):
+    for key, label, description in PDF_BLOCK_OPTIONS:
+        st.markdown(f"**{label}** (`{key}`): {description}")
+        
+
+# -----------------------------------------------------------------------------
 # Settings
 # -----------------------------------------------------------------------------
 phx_section(
@@ -1292,9 +1349,11 @@ if run_clicked:
     try:
         downloaded_pdfs, success_rows, failed_rows = download_pdfs(
             codes=codes,
+            selected_blocks=selected_blocks,
             headless=headless,
             timeout_seconds=timeout_seconds,
             browser_workers=browser_workers,
+        )
         )
     except Exception as exc:
         st.error(f"Chrome/Selenium failed before downloads could complete: {exc}")
